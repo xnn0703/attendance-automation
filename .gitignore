@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+
+# 临时 / 测试目录
+_gtest/
+_smoke/
+_test_may/
+
+# Excel 锁文件
+~$*.xlsx
+
+# 员工数据（含真实姓名/工号/考勤/入离职，按隐私不入库；文件保留在本地磁盘）
+/*.xlsx
+
+# 本地个人配置
+.claude/settings.local.json
+
+# 运行时人工决策（按月生成；如需版本化某月决策可 git add -f）
+kq_keep.txt
+kq_classify.txt
+kq_config.txt
+
+# PyInstaller 打包产物（exe 较大，本地构建，不入库）
+app/build/
+app/dist/
+app/*.spec
