@@ -123,9 +123,13 @@ class AttendanceDelegate(QtWidgets.QStyledItemDelegate):
             painter.setPen(Qt.NoPen)
             painter.drawPolygon(tri)
 
-        # 选中描边（覆盖打卡+加班两行视觉）
+        # 选中描边 + ring 光晕（对齐设计稿 2px 描边 + 3px accent-ring）
         if info.get('active'):
             painter.setBrush(Qt.NoBrush)
+            ring = _qc(theme.ACCENT)
+            ring.setAlphaF(0.30)
+            painter.setPen(QtGui.QPen(ring, 3))
+            painter.drawRect(rect.adjusted(2.5, 2.5, -2.5, -2.5))
             painter.setPen(QtGui.QPen(_qc(theme.ACCENT), 2))
             painter.drawRect(rect.adjusted(1, 1, -1, -1))
 
@@ -177,6 +181,15 @@ class AttendanceDelegate(QtWidgets.QStyledItemDelegate):
             return
         in_t = cell.get('in') or ''
         out_t = cell.get('out') or ''
+        if st == 'field':                         # 外勤：in / out / 外勤 三行
+            h3 = rect.height() / 3.0
+            painter.setFont(f)
+            painter.drawText(QRectF(rect.left(), rect.top(), rect.width(), h3), Qt.AlignCenter, in_t or '—')
+            painter.drawText(QRectF(rect.left(), rect.top() + h3, rect.width(), h3), Qt.AlignCenter, out_t or '—')
+            f.setPixelSize(7)
+            painter.setFont(f)
+            painter.drawText(QRectF(rect.left(), rect.top() + 2 * h3, rect.width(), h3), Qt.AlignCenter, '外勤')
+            return
         if st == 'miss':
             top, bot, bold_top, bold_bot = (in_t or '—'), '缺卡', False, False
         elif st == 'pending':
