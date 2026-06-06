@@ -6,6 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **始终用中文回复，并用中文展示思考过程及答案**（Always respond in Chinese, and present the reasoning/thinking process and answers in Chinese.）保留代码、文件名、命令、专有名词原文即可。
 
+## 常用命令（Commands）
+
+> 数据目录（含 `原表/花名册/调班表` 三个 xlsx）下文记作 `<DIR>`；**默认目录跨平台**：环境变量 `KQ_DIR` 优先，否则 Windows=`D:\考勤`、mac/Linux=`~/考勤`（见 `engine.default_data_dir`）。依赖：Python 3.9+ + `pip install PySide6 openpyxl pyinstaller`。命令里 `python` 在 mac 用 `python3`。
+
+| 任务 | 命令 |
+|------|------|
+| 运行 GUI 上位机 | `python app/gui.py`（双击 `app/启动考勤.bat`(Win) / `app/启动考勤.command`(mac)） |
+| 引擎单阶段（命令行） | `python app/engine.py [prep\|worklist\|build] <DIR>`（缺省 stage=`build`、DIR=默认目录） |
+| 造合成测试数据 | `python app/_make_sample.py <DIR>`（无真实数据时生成覆盖各 status 的三表，供冒烟/演示） |
+| **金标准回归测试** | `python app/test_golden.py` → 末行 `ZERO-REGRESSION` / `REGRESSION FOUND`（需真实数据 + PS 金标准） |
+| 无头冒烟（端到端走查 GUI） | `KQ_DIR=<DIR> python app/_smoke_gui.py` 或 `python app/gui.py --smoke <DIR>`（offscreen，末行 `SMOKE OK`） |
+| 打包 exe | `app/build_exe.bat`(Win) 或 GitHub Actions（推 `v*` tag）→ `nanjing_kaoqin.exe` |
+| Skill（PowerShell 实现） | `& .claude/skills/nanjing-kaoqin/scripts/kq_run.ps1 -Stage prep\|worklist\|build -Dir <DIR>` |
+
+- **无 pytest**：`test_golden.py` / `_smoke_gui.py` 都是直接 `python` 跑的独立脚本，没有测试框架；"跑单个测试"=跑对应脚本。`KQ_NO_MOTION=1` 可关 GUI 动效（reduced-motion）。
+- ⚠️ **测试默认目录** 现由 `KQ_DIR`/`default_data_dir()` 决定（不再硬编码）。`test_golden` 仍依赖真实三表 + **PS 版《考勤》作金标准**（逐格比对值/底色/红字）；`_smoke_gui` 只需三表即可（合成数据亦可，先跑 `_make_sample.py`）。隐私数据按 `.gitignore` 不入库。
+- ⚠️ Skill 调用务必用 PowerShell `&` 调用算子，**不要** `powershell.exe -File`（中文路径会被截断）。
+- **发版**：GitHub 镜像仓库 `xnn0703/attendance-automation`，`.github/workflows/build-windows.yml` 在 windows-latest 上 PyInstaller 打包，推 `v*` tag 自动发 Release。
+
 ## 项目目标与愿景（Goal & Vision）
 
 南京六部（Nanjing Sixth Department）**考勤自动化项目**。目标是沉淀一套**可复用、可自动化的考勤工作流**，
@@ -211,20 +230,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   skill 的 `prep` 已支持 inlineStr 与共享字符串两种原表；调班按基准翻转、日期兼容 `/`、`-`、Excel 序列号。
 - 早期月份特定原型（`stage1/2/3_*.ps1`、`kq_calc/kq_write/_dump.ps1`）**已删除**，逻辑全部并入 skill。
 
-## GUI 上位机（`app/`，Python + PySide6）
+## GUI 上位机（`app/`，Python + PySide6）—— 三阶段三栏「活的彩色工作台」
 
-桌面上位机 MVP（远期目标的 Phase 1）。**引擎方案 A**：Python 重写，已对 2026-05 **逐格零回归**。
+按 `docs/attendance-automation/handoff/` 设计稿重构（旧 5-tab 向导已替换）：**选目录 → 自动算好 → 在一张实时联动的彩色考勤表上把少数需人定的点点掉 → 导出**。设计稿是视觉/交互依据，**业务判定一律以 `engine` 为权威**（原型 `data.js` 规则是示意简化，勿照搬，见 [[ui-rules-authority]]）。
 
-- `app/engine.py` —— 考勤引擎（openpyxl 读写；规则照搬 `references/rules.md`）。对外 `prep / worklist / build`，
-  返回 dict 供 GUI 用；着色用 `PatternFill`/`Font`。
-- `app/gui.py` —— PySide6 五步向导：①选目录 ②整理(勾选离职保留) ③归类(下拉 缺卡/公出/未出勤) ④配置 ⑤生成+打开。
-- `app/test_golden.py` —— 金标准回归：Python 产出 vs PS《考勤》逐格比对（值/底色/红字），当前 **0 差异**。
-  `app/_smoke_gui.py` —— 无显示器(offscreen) 端到端冒烟。
-- **启动**：双击 `app\启动考勤.bat`（源码）或 `app\dist\nanjing_kaoqin.exe`（打包版、免装 Python）；命令行 `python app\gui.py`。
-- **Phase 2 已做**：彩色预览、双击"缺卡格"改判即时重算、决策存取（保存/载入 `kq_*.txt`，与 skill 通用）、选目录输入校验。
-- **Phase 3 打包**：`app\build_exe.bat` → `python -m PyInstaller --windowed --onefile`，产出 `app\dist\nanjing_kaoqin.exe`（约 48MB）；
-  `gui.py --smoke <目录>` 为无头自检。依赖：真 Python 3.x + `pip install PySide6 openpyxl pyinstaller`（本机已装）。
-- 设计文档：`docs/GUI上位机设计.md`。两套实现（PowerShell skill / Python app）规则同源、互为印证。
+**阶段路由**（`MainWindow`+`QStackedWidget`）：①就绪 `ReadyView`（拖入/校验/5 形态）→ ②复核 `Workbench`（三栏 `QSplitter`）→ ③完成 `Dashboard`（仪表盘+导出）；顶部状态条 + `Stepper`（maxStep 门控）。
+
+**模块**（`app/` 扁平，`gui.py` 为入口/主控）：
+- `engine.py` 新增 **`analyze(d,classify,config)`** 复用判定输出结构化 `{calendar, employees{cells:{status,in,out,ot,reason,swap}}, pending, stats}` 供 UI；`prep/worklist/build` 不动 → 零回归；`status` 自检与 `day_style` **逐格一致**。
+- `theme.py` 色板+QSS · `icons.py` 9 角标自绘 · `model.py` `AttendanceModel`（每人 2 行）· `delegate.py` 单元自绘 · `grid.py` `AttGrid`（冻结姓名列+自绘日期表头+图例+悬浮卡+改判菜单+搜索/筛选/跳异常）· `panels.py` `ReadyView/TodoPanel/Inspector/Dashboard/AdvancedDrawer` · `widgets.py` `Stepper/Banner/Toast/ProgressRing` · `undo.py` 撤销栈 · `memory.py` 跨月档 `kq_memory.json`。
+- **重算中枢** `MainWindow.recompute()`：决策（改判/离职取舍/批量采纳/配置）只改 `classify/keep/config` → `analyze` → 三栏+统计秒级刷新；经 `undo` 栈包裹（Ctrl+Z/Y）。**全键盘流**：↑↓/1·2·3 归类/Enter 采纳/K·J 取舍/N 跳异常//搜索/Esc。
+- **颜色三重编码**（底色+字色+角标+纹理，色弱友好）；界面比 Excel 丰富，**导出仍走 `engine.build`** 保零回归。
+- `app/gui.py` —— PySide6 三栏工作台主控（替换旧五步向导）；`--smoke <DIR>` 无头自检。
+- 设计文档：`docs/attendance-automation/handoff/`（规范+原型）、`docs/GUI上位机设计.md`（旧）。两套实现（PowerShell skill / Python app）规则同源、互为印证。
+
+## 代码架构（`app/engine.py` 数据流）
+
+**两套实现规则同源**：PowerShell skill（`kq_run.ps1`，模板敏感）与 Python app（`engine.py`，openpyxl、模板无关、已逐格验证）互为印证；改规则要**两边同步**，并以 `references/rules.md` 与本文件「考勤规则」为权威口径。下面只讲 Python app 的大图景——这是要读多个函数才能拼出的核心：
+
+**纯函数引擎 + 薄 GUI**：`engine.py` 不依赖 Qt、对外暴露 `prep / worklist / build`（读 xlsx→算→写 xlsx）与 `analyze`（读→算→**返回结构化 dict、不写盘**，供 GUI 渲染彩色表/悬浮卡/检查器），都返回 dict；`gui.py`（`MainWindow`，**三阶段三栏工作台**：就绪→复核→完成）只做编排与展示，把用户决策以 **dict** 传进引擎（也可落盘成 `kq_*.txt`）。`test_golden.py` / `_smoke_gui.py` 分别从引擎层、GUI 层驱动同一套逻辑。
+
+**三阶段管道**（每阶段产出喂给下一阶段）：
+1. `prep(<DIR>, keep)`：`原表` → `初表`。删非「南京六部」/无花名册匹配者；按姓名从花名册补 **D 工号 / E 职位**；按工号升序**整行重排**（连同 G–AK 打卡列）；离职且打卡 <7 天者进 `lizhi_candidates`，不在 `keep` 集合内则删行。
+2. `worklist(<DIR>)`：扫 `初表`，列出**在职区间内、工作日、打卡 <2 次**的格子（`cases`，含建议归类 `R/G`），供人工逐例定 缺卡/公出/未出勤。
+3. `build(<DIR>, classify, config)`：核算 + 着色 → `考勤`。每人行下**插入一行「加班时长」**（只填数字）；姓名格全勤标紫。**自底向上**应用样式与插行，避免行号移位。
+
+**数据加载（权威表 → 内存模型）**：
+- `find_inputs(d)`：按文件名 token（`原表/初表/花名册/调班/考勤`）在目录里认领各 xlsx。
+- `load_roster`：按**姓名**聚合花名册；`ros_of` 取**在职**条（`用工类型≠离职`）解决重名。
+- `load_calendar`：从调班表左半区网格解析 `base_work`（`N班`=上班）；右半区 O/P 两列日期进 `swap[姓名]`。`is_work(cal, name, d)` = 基准班/休，遇个人调班日**翻转**。
+
+**逐日判定（`parse_day` 出 `{cnt,first,le,wq}`，喂给三个决策器）**：
+- `ot_val`：加班小时——工作日 = 末卡 −18:30（含 ≥2h 减 0.5）；节假日 = 末−首（扣午休 1.5h、>8h 减 0.5）；外勤/排除人员/`<2` 次=0。取整 `ru30`/`rd30`（向上/向下到 0.5h）。
+- `day_style` → `(fill, font_red)`：迟到红字、>9:30 红底、早退红底、缺卡绿/公出蓝/未出勤红、外勤蓝；优先级见「考勤规则 F」。
+- `breaks_quan`：是否破全勤。`window(roster,name,...)` 给出**在职区间** `{s,e,j}`（`j`=入职当天，享迟到仅红字特例），区间外留空不判。
+
+**配置驱动（脚本读、Claude/GUI 写，与 skill 共用 txt 格式）**：`kq_keep.txt`（离职保留工号）、`kq_classify.txt`（`工号|日=B/G/R`）、`kq_config.txt`（`OT_EXCLUDE`/`STRICT_LATE`/`LATE_FONT_ONLY`）。`read_*` / `write_*` 成对；`default_config()` = 南京六部当前口径（排除加班 `Y17074,Y28001`；刘莹 `Y28006` 严格到 09:05；曹兆阳 `Y28001` 迟到仅红字）。`validate(d)` 在跑前查三表齐全、原表与调班表**月份一致**。
+
+> 换月通用性靠**配置 + 从 A1 周期解析年月 + 月末天数动态算**，没有硬编码 5 月；但 `default_config()` 里的工号特例是部门相关的，换部门需改配置。
 
 ## 已知坑（PowerShell，已多次踩到）
 

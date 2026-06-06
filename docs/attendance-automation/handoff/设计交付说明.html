@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>考勤自动化 · 设计交付说明</title>
+<link rel="stylesheet" href="spec.css" />
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="brand">
+    <img src="icon/icon-256.png" alt="icon" />
+    <div><b>考勤自动化</b><span>设计交付说明 v1.0</span></div>
+  </div>
+  <div class="grp">概述</div>
+  <a href="#overview"><span class="n">0</span> 产品与流程</a>
+  <a href="#icon"><span class="n">1</span> App 图标</a>
+  <div class="grp">视觉系统</div>
+  <a href="#color"><span class="n">2</span> 色彩系统</a>
+  <a href="#semantic"><span class="n">3</span> 语义数据色</a>
+  <a href="#type"><span class="n">4</span> 字体与排版</a>
+  <a href="#geometry"><span class="n">5</span> 间距·圆角·阴影</a>
+  <div class="grp">组件与动效</div>
+  <a href="#components"><span class="n">6</span> 组件规格</a>
+  <a href="#motion"><span class="n">7</span> 动态效果说明</a>
+  <a href="#states"><span class="n">8</span> 状态与空态</a>
+  <div class="grp">逻辑</div>
+  <a href="#interaction"><span class="n">9</span> 交互逻辑</a>
+  <a href="#data"><span class="n">10</span> 数据与计算规则</a>
+  <a href="#impl"><span class="n">11</span> 实现备注 (Qt)</a>
+  <a href="#roadmap"><span class="n">12</span> 进阶交互规格</a>
+</nav>
+
+<main>
+<div class="hero">
+  <div class="kick">Design Handoff · 南京六部考勤自动化</div>
+  <h1>设计交付说明</h1>
+  <p>本文件是「考勤复核工作台」桌面应用的完整设计规范：色彩 / 字体 / 组件 / 动效 / 交互逻辑 / 数据规则一应俱全，所有数值可直接落到代码。配套交互原型见 <code>考勤复核工作台.html</code>。</p>
+  <div class="meta">
+    <span>平台 · Windows 桌面 (PySide6 / Qt)</span>
+    <span>主色 · 石板灰 #475569</span>
+    <span>核心 · 颜色即结论</span>
+    <span>验证月份 · 2026-04</span>
+  </div>
+</div>
+
+<!-- ============ 0 OVERVIEW ============ -->
+<section id="overview">
+  <div class="h"><span class="n">0</span><h2>产品与流程</h2></div>
+  <p class="lead">工具把"一堆原始打卡表"自动整理、计算成一张可交付的彩色《考勤》表。人只需处理机器无法笃定的少数判断。整个体验是一条<b>三阶段向导</b>：准备 → 复核与决策 → 完成。</p>
+
+  <div class="flow">
+    <div class="st"><div class="num">① 准备</div><b>选文件夹 · 自动校验</b><p>识别三张输入表（打卡原表 / 花名册 / 调班表），校验月份一致性，自动算完所有可算项，列出待办数量。</p></div>
+    <div class="arr">→</div>
+    <div class="st"><div class="num">② 复核与决策</div><b>三栏工作台</b><p>左侧待办、中间彩色考勤网格、右侧检查器。逐条归类、离职取舍，每次改判即时重算。</p></div>
+    <div class="arr">→</div>
+    <div class="st"><div class="num">③ 完成</div><b>汇总 · 导出</b><p>本月概览（加班 / 全勤 / 异常），导出与界面配色一致的 Excel《考勤》表。</p></div>
+  </div>
+
+  <div class="callout" style="margin-top:24px">
+    <span class="ic">◆</span>
+    <div><b>设计主张：</b>克制、信息密度高、零学习成本。界面强调色（石板灰）与<b>数据语义色</b>严格分离 —— 强调色只用于按钮 / 选中 / 进度等"界面状态"，语义色只用于"考勤结论"，避免用户混淆"这红色是系统按钮还是迟到"。</div>
+  </div>
+</section>
+
+<!-- ============ 1 ICON ============ -->
+<section id="icon">
+  <div class="h"><span class="n">1</span><h2>App 图标 · 网格成勾</h2></div>
+  <p class="lead">由考勤网格的格子点亮成一个对勾 —— 同时表达"表格"与"已核对"。石板渐变底 + 三枚语义色格子（琥珀=迟到 / 蓝=公出 / 绿=缺卡通过），是产品内核的最小化表达。</p>
+
+  <div class="card" style="margin-bottom:18px">
+    <div class="iconShow">
+      <div class="big"><img src="icon/icon-512.png" alt="" /></div>
+      <div class="sz">
+        <div class="it"><img src="icon/icon-48.png" width="48" height="48" alt=""/><span>48px</span></div>
+        <div class="it"><img src="icon/icon-32.png" width="32" height="32" alt=""/><span>32px</span></div>
+        <div class="it"><img src="icon/icon-24.png" width="24" height="24" alt=""/><span>24px</span></div>
+        <div class="it"><img src="icon/icon-16.png" width="16" height="16" alt=""/><span>16px</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cards cols-2">
+    <div class="card">
+      <h4>构造参数（512 画布）</h4>
+      <table>
+        <tr><th>元素</th><th>规格</th></tr>
+        <tr><td>圆角底板</td><td class="mono">x36 y36 · 440×440 · rx104</td></tr>
+        <tr><td>底色渐变</td><td class="mono">#52617A → #2F3B4F 垂直</td></tr>
+        <tr><td>顶部高光</td><td class="mono">白 16%→0% 垂直</td></tr>
+        <tr><td>网格</td><td class="mono">5×5 · 格 58 · 间距 10 · rx13</td></tr>
+        <tr><td>对勾格(白)</td><td class="mono">(0,3)(1,4)(2,3)(3,2)(4,1)</td></tr>
+        <tr><td>底纹格(白 12%)</td><td>其余所有格</td></tr>
+        <tr><td>琥珀格</td><td class="mono">(1,0) #E6B450</td></tr>
+        <tr><td>蓝格</td><td class="mono">(4,3) #5B91EE</td></tr>
+        <tr><td>绿格</td><td class="mono">(3,4) #34D27A</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h4>导出与适配</h4>
+      <ul class="clean">
+        <li><b>.ico 全套尺寸：</b>256 / 48 / 32 / 24 / 16，已合并为 <code>icon/icon.ico</code>（PNG 内嵌，Win Vista+），另附各尺寸独立 PNG。</li>
+        <li><b>16px 任务栏简化版：</b>16px 下保留 3 枚白色对勾格 + 蓝/绿点缀，省略底纹格（标题栏已采用此简化版）。</li>
+        <li><b>留白：</b>底板四周各留 36/512 ≈ <b>7%</b> 安全边；切勿铺满到边。</li>
+        <li><b>单色场景</b>（托盘禁用态）：用 <code>#94A3B8</code> 描边对勾，底板透明。</li>
+        <li>源文件 <code>icon/icon.svg</code> 为矢量，可无损再导出任意尺寸。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2 COLOR ============ -->
+<section id="color">
+  <div class="h"><span class="n">2</span><h2>色彩系统 · 中性与强调</h2></div>
+  <p class="lead">冷灰中性盘 + 单一石板强调色。所有界面色用 CSS 变量定义，深色 / 暖白两套主题只覆盖这层变量。</p>
+
+  <h3>中性盘（浅色默认）</h3>
+  <div class="palette">
+    <div class="chip"><span class="big" style="background:#eef1f5"></span><div><b>--bg</b><span class="hex">#EEF1F5</span></div></div>
+    <div class="chip"><span class="big" style="background:#fff"></span><div><b>--surface</b><span class="hex">#FFFFFF</span></div></div>
+    <div class="chip"><span class="big" style="background:#f8fafc"></span><div><b>--surface-2</b><span class="hex">#F8FAFC</span></div></div>
+    <div class="chip"><span class="big" style="background:#f1f5f9"></span><div><b>--surface-3</b><span class="hex">#F1F5F9</span></div></div>
+    <div class="chip"><span class="big" style="background:#e2e8f0"></span><div><b>--line</b><span class="hex">#E2E8F0</span></div></div>
+    <div class="chip"><span class="big" style="background:#cbd5e1"></span><div><b>--line-2</b><span class="hex">#CBD5E1</span></div></div>
+    <div class="chip"><span class="big" style="background:#0f172a"></span><div><b>--ink</b><span class="hex">#0F172A</span></div></div>
+    <div class="chip"><span class="big" style="background:#475569"></span><div><b>--ink-2</b><span class="hex">#475569</span></div></div>
+    <div class="chip"><span class="big" style="background:#94a3b8"></span><div><b>--ink-3</b><span class="hex">#94A3B8</span></div></div>
+  </div>
+
+  <h3>强调色 · 石板灰 <span class="tag">界面状态专用</span></h3>
+  <p class="muted" style="font-size:13px">用于：主按钮、选中态、进度环、步骤指示、聚焦边框、待办高亮。<b>不用于</b>任何考勤结论。</p>
+  <div class="palette">
+    <div class="chip"><span class="big" style="background:#475569"></span><div><b>--accent</b><span class="hex">#475569</span></div></div>
+    <div class="chip"><span class="big" style="background:#334155"></span><div><b>--accent-strong</b><span class="hex">#334155</span></div></div>
+    <div class="chip"><span class="big" style="background:#1e293b"></span><div><b>--accent-deep</b><span class="hex">#1E293B</span></div></div>
+    <div class="chip"><span class="big" style="background:#e8edf3"></span><div><b>--accent-soft</b><span class="hex">#E8EDF3</span></div></div>
+    <div class="chip"><span class="big" style="background:#475569;opacity:.3"></span><div><b>--accent-ring</b><span class="hex">rgba(71,85,105,.30)</span></div></div>
+  </div>
+
+  <h3>状态反馈色</h3>
+  <div class="palette">
+    <div class="chip"><span class="big" style="background:#1a7544"></span><div><b>--ok</b><span class="hex">#1A7544</span></div></div>
+    <div class="chip"><span class="big" style="background:#b45309"></span><div><b>--warn</b><span class="hex">#B45309</span></div></div>
+    <div class="chip"><span class="big" style="background:#b42318"></span><div><b>--err</b><span class="hex">#B42318</span></div></div>
+  </div>
+
+  <h3>主题与气质切换</h3>
+  <div class="cards cols-3">
+    <div class="card"><h4>浅色 · 冷静中性（默认）</h4><p class="muted" style="font-size:12.5px">上表即为默认值。生产环境主推此套。</p></div>
+    <div class="card"><h4>暖白纸感 <code>[data-mood=paper]</code></h4><p class="muted" style="font-size:12.5px">覆盖：--bg #EFECE6 · --surface #FFFDF9 · --line #E7E0D4 · --accent #6B5D4F（暖棕）。适合长时间审阅、不冰冷。</p></div>
+    <div class="card"><h4>深色 <code>[data-theme=dark]</code></h4><p class="muted" style="font-size:12.5px">覆盖：--bg #0B1220 · --surface #141C2B · --ink #E7EDF5 · --accent #7C93B3。语义色同步给出暗色映射（见下表第 4 列）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 3 SEMANTIC ============ -->
+<section id="semantic">
+  <div class="h"><span class="n">3</span><h2>语义数据色 · 颜色即结论</h2></div>
+  <p class="lead">这是产品的灵魂。每一种考勤结论 = <b>颜色 + 专属角标图标 + 边框/纹理</b>三重编码，色弱用户靠图标也能区分。下面解决了简报里"红色多义、蓝色多义"的核心冲突。</p>
+
+  <div class="callout warn" style="margin-bottom:22px">
+    <span class="ic">⚠</span>
+    <div><b>冲突化解：</b>原方案里"红"同时代表迟到/早退/未出勤，"蓝"同时代表公出/外勤。新系统中——三种红用<b>图标</b>分家（迟到=钟 / 早退=出门箭头 / 未出勤=叉+斜纹+实底）；两种蓝用<b>处理方式</b>分家（公出=实底填充 / 外勤=左侧色条+斜纹、底色极浅）。</div>
+  </div>
+
+  <div class="tbl-scroll">
+  <table>
+    <tr><th>结论</th><th>视觉样例</th><th>底/字/边 (浅色)</th><th>暗色映射 (bg/fg)</th><th>角标</th><th>判定</th></tr>
+    <tr>
+      <td><b>迟到</b></td>
+      <td><span class="demoCell" style="background:#fef6e7;border-color:#f0c66b;color:#b45309"><span class="ic">◷</span>08:18<br>18:31</span></td>
+      <td class="mono">#FEF6E7 / #B45309 / #F0C66B<br><span class="muted">不铺重底，仅淡黄</span></td>
+      <td class="mono">#3A2F17 / #F0C66B</td>
+      <td>钟 clock</td>
+      <td>09:00–09:30 到</td>
+    </tr>
+    <tr>
+      <td><b>迟到较重</b></td>
+      <td><span class="demoCell" style="background:#fdecea;border-color:#f1b0a8;color:#b42318"><span class="ic">◉</span>09:47<br>18:33</span></td>
+      <td class="mono">#FDECEA / #B42318 / #F1B0A8</td>
+      <td class="mono">#3D2220 / #F4A89E</td>
+      <td>实心钟 clock2</td>
+      <td>晚于 09:30</td>
+    </tr>
+    <tr>
+      <td><b>早退</b></td>
+      <td><span class="demoCell" style="background:#fdecea;border-color:#f1b0a8;color:#b42318"><span class="ic">⇥</span>08:52<br>17:42</span></td>
+      <td class="mono">#FDECEA / #B42318 / #F1B0A8</td>
+      <td class="mono">#3D2220 / #F4A89E</td>
+      <td>出门箭头 exit</td>
+      <td>早于 18:30 离</td>
+    </tr>
+    <tr>
+      <td><b>未出勤</b></td>
+      <td><span class="demoCell" style="background:#d92d20;border-color:#b42318;color:#fff"><span class="ic">✕</span>缺</span></td>
+      <td class="mono">#D92D20 / #FFFFFF / #B42318<br><span class="muted">实底 + 45°斜纹</span></td>
+      <td class="mono">#B42318 / #FFFFFF</td>
+      <td>叉 cross</td>
+      <td>全天无打卡</td>
+    </tr>
+    <tr>
+      <td><b>缺卡</b></td>
+      <td><span class="demoCell" style="background:#e3f5e9;border-color:#8bd3a6;color:#1a7544"><span class="ic">◑</span>08:55<br><span class="lo">缺卡</span></span></td>
+      <td class="mono">#E3F5E9 / #1A7544 / #8BD3A6</td>
+      <td class="mono">#16331F / #8BD3A6</td>
+      <td>半圆 half</td>
+      <td>当天仅 1 次打卡</td>
+    </tr>
+    <tr>
+      <td><b>公出</b></td>
+      <td><span class="demoCell" style="background:#dbe7fb;border-color:#9ec0f5;color:#1d4ed8"><span class="ic">▮</span><span class="lo">公出</span></span></td>
+      <td class="mono">#DBE7FB / #1D4ED8 / #9EC0F5<br><span class="muted">实底填充</span></td>
+      <td class="mono">#1C2C4A / #9EC0F5</td>
+      <td>公文包 bag</td>
+      <td>外出公干，计出勤</td>
+    </tr>
+    <tr>
+      <td><b>外勤日</b></td>
+      <td><span class="demoCell" style="background:#e6f4f9;border-color:#7cc4d8;border-left:3px solid #0891b2;color:#0e6f8a">08:50<br>18:40<br><span class="lo">外勤</span></span></td>
+      <td class="mono">#E6F4F9 / #0E6F8A / #7CC4D8<br><span class="muted">左条 #0891B2 + 斜纹</span></td>
+      <td class="mono">#143038 / #7CC4D8</td>
+      <td>定位针 pin</td>
+      <td>当天含外勤打卡</td>
+    </tr>
+    <tr>
+      <td><b>全勤</b></td>
+      <td><span class="demoCell" style="background:#f4e9fb;border-color:#d9b4ef;color:#7e22ce"><span class="ic">★</span>姓名</span></td>
+      <td class="mono">#F4E9FB / #7E22CE / #D9B4EF<br><span class="muted">用于姓名格底色</span></td>
+      <td class="mono">#2C1C3D / #D9B4EF</td>
+      <td>星 star</td>
+      <td>整月无异常</td>
+    </tr>
+    <tr>
+      <td><b>调班上班</b></td>
+      <td><span class="demoCell" style="background:#fff;border-color:#e2e8f0;color:#0f172a">08:56<br>18:35<span style="position:absolute;left:0;top:0;width:0;height:0;border-top:9px solid #f3c08a;border-right:9px solid transparent"></span></span></td>
+      <td class="mono">角标 #C2410C / #FDECD9 / #F3C08A<br><span class="muted">左上橙色三角</span></td>
+      <td class="mono">#3A2716 / #F3C08A</td>
+      <td>左上三角 + swap</td>
+      <td>个人调班调来的班</td>
+    </tr>
+    <tr>
+      <td><b>待归类</b></td>
+      <td><span class="demoCell" style="background:#fff;border:1.5px dashed #475569;color:#475569">—<br><span class="lo" style="color:#475569">待定</span><span style="position:absolute;top:1px;right:1px;width:13px;height:13px;border-radius:4px;background:#475569;color:#fff;font-size:9px;font-weight:800;display:grid;place-items:center">?</span></span></td>
+      <td class="mono">白底 + 石板虚线框<br><span class="muted">右上角 ? 徽标</span></td>
+      <td class="mono">— / 石板</td>
+      <td>? 徽标</td>
+      <td>打卡<2次，待人判</td>
+    </tr>
+    <tr>
+      <td><b>休息/假</b></td>
+      <td><span class="demoCell" style="background:#f1f5f9;border-color:#e2e8f0;color:#94a3b8">休</span></td>
+      <td class="mono">#F1F5F9 / #94A3B8</td>
+      <td class="mono">#202C40 / #6B7C95</td>
+      <td>—</td>
+      <td>调班表标记的休/法假</td>
+    </tr>
+  </table>
+  </div>
+
+  <div class="callout" style="margin-top:20px">
+    <span class="ic">◆</span>
+    <div><b>加班副行：</b>每位员工每天占两行 —— 上行打卡、下行加班小时。加班行底色 = 当天结论色的 55% 淡化版（<code>color-mix(in srgb, 结论底 55%, surface)</code>），保持纵向关联又不喧宾夺主。</div>
+  </div>
+</section>
+
+<!-- ============ 4 TYPE ============ -->
+<section id="type">
+  <div class="h"><span class="n">4</span><h2>字体与排版</h2></div>
+  <p class="lead">系统字体优先，保证 Qt 桌面环境零依赖。所有数字启用<b>等宽 tabular-nums</b>，让打卡时间、加班小时、统计数字纵向对齐。</p>
+  <div class="cards cols-2">
+    <div class="card">
+      <h4>字体栈</h4>
+      <pre><span class="c">/* 中文优先思源/雅黑，西文 Segoe UI */</span>
+font-family: <span class="y">"Segoe UI"</span>, <span class="y">"Microsoft YaHei"</span>,
+  <span class="y">"PingFang SC"</span>, <span class="y">"Source Han Sans SC"</span>,
+  system-ui, -apple-system, sans-serif;
+font-feature-settings: <span class="y">"tnum"</span> 1; <span class="c">/* 全局等宽数字 */</span></pre>
+    </div>
+    <div class="card">
+      <h4>字号梯度（px）</h4>
+      <table>
+        <tr><th>用途</th><th>字号 / 字重</th></tr>
+        <tr><td>页面大标题</td><td class="mono">22–34 / 800</td></tr>
+        <tr><td>区块标题</td><td class="mono">15–16.5 / 700</td></tr>
+        <tr><td>正文 / 标签</td><td class="mono">12.5–13.5 / 500–600</td></tr>
+        <tr><td>网格打卡时间</td><td class="mono">9 / 500（迟到早退 700）</td></tr>
+        <tr><td>角标徽标</td><td class="mono">8–9 / 700–800</td></tr>
+        <tr><td>统计数字</td><td class="mono">18–30 / 800</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="callout warn" style="margin-top:16px"><span class="ic">⚠</span><div>网格内 9px 是<b>桌面高密度表格</b>的刻意取值（对标 Excel）。仅限网格单元；其余界面正文不得低于 12px。</div></div>
+</section>
+
+<!-- ============ 5 GEOMETRY ============ -->
+<section id="geometry">
+  <div class="h"><span class="n">5</span><h2>间距 · 圆角 · 阴影 · 网格尺寸</h2></div>
+  <h3>圆角与阴影</h3>
+  <div class="tokenGrid">
+    <div class="tok"><div class="v">6px</div><div class="l">--r-sm 小控件/徽标</div></div>
+    <div class="tok"><div class="v">9px</div><div class="l">--r-md 按钮/输入</div></div>
+    <div class="tok"><div class="v">14px</div><div class="l">--r-lg 卡片/面板</div></div>
+    <div class="tok"><div class="v">0 1px 2px /.06</div><div class="l">--shadow-1 静置</div></div>
+    <div class="tok"><div class="v">0 4px 14px /.10</div><div class="l">--shadow-2 悬浮卡</div></div>
+    <div class="tok"><div class="v">0 18px 48px /.20</div><div class="l">--shadow-3 弹层/抽屉</div></div>
+  </div>
+  <h3>考勤网格关键尺寸</h3>
+  <div class="tokenGrid">
+    <div class="tok"><div class="v">152px</div><div class="l">冻结姓名列宽</div></div>
+    <div class="tok"><div class="v">48px</div><div class="l">每日列宽</div></div>
+    <div class="tok"><div class="v">34px</div><div class="l">打卡行高</div></div>
+    <div class="tok"><div class="v">18px</div><div class="l">加班副行高</div></div>
+    <div class="tok"><div class="v">44px</div><div class="l">日期表头高</div></div>
+    <div class="tok"><div class="v">1px</div><div class="l">网格线 --line</div></div>
+  </div>
+  <h3>间距节奏</h3>
+  <p class="muted" style="font-size:13px">面板内边距 12–24px；卡片间距 8–14px；区块纵向间距 16–30px。三栏工作台列宽：<code>312px · 1fr · 332px</code>。</p>
+</section>
+
+<!-- ============ 6 COMPONENTS ============ -->
+<section id="components">
+  <div class="h"><span class="n">6</span><h2>组件规格</h2></div>
+  <p class="lead">逐个列出关键组件的结构、尺寸与状态。配合原型查看实时行为。</p>
+
+  <div class="cards cols-2">
+    <div class="card"><h4>① 标题栏 TitleBar</h4><ul class="clean">
+      <li>高 <b>34px</b>，可拖动区 <code>-webkit-app-region:drag</code>。</li>
+      <li>左：18px App 图标 + "考勤自动化 — 南京六部 · 月份"。</li>
+      <li>右：最小化 / 最大化 / 关闭（46×34，关闭 hover 转 #D92D20 白字）。</li>
+    </ul></div>
+    <div class="card"><h4>② 步骤条 Stepper</h4><ul class="clean">
+      <li>三步药丸：准备 / 复核与决策 / 完成。</li>
+      <li>当前步=石板实心徽标+soft 底；已完成=对勾；未达=禁用。</li>
+      <li>受 <code>maxStep</code> 门控，未走到的步骤不可跳。</li>
+    </ul></div>
+    <div class="card"><h4>③ 考勤网格 AttGrid <span class="tag">核心</span></h4><ul class="clean">
+      <li>冻结：表头 <code>sticky top</code> + 姓名列 <code>sticky left</code>，右缘投影区分。</li>
+      <li>表头每列：日 / 周X / 班·休·假 徽标（休假灰、班绿）。</li>
+      <li>每人两行（打卡 / 加班）；单元 = 底色+角标+纹理。</li>
+      <li>选中：2px 石板描边 + 3px ring；待定：石板虚线框 + ? 徽标。</li>
+      <li>底部常驻<b>图例条</b>。</li>
+    </ul></div>
+    <div class="card"><h4>④ 悬浮解释卡 HoverCard</h4><ul class="clean">
+      <li>鼠标悬停单元出现，232px 宽，<code>position:fixed</code>。</li>
+      <li>自动翻转：上方空间不足则移到下方。</li>
+      <li>内容：姓名·日期 / 结论 + 色块 / 原因 / 原始打卡 / 加班算式。</li>
+    </ul></div>
+    <div class="card"><h4>⑤ 改判气泡 ReclassMenu</h4><ul class="clean">
+      <li>点击待定单元弹出，216px；三选项 缺卡/公出/未出勤。</li>
+      <li>工具建议项带"建议"徽标。</li>
+      <li>点外部 / <span class="kbd">Esc</span> 关闭。</li>
+    </ul></div>
+    <div class="card"><h4>⑥ 待办面板 TodoPanel</h4><ul class="clean">
+      <li>顶部进度环（剩余数）+ "已处理 n/N"。</li>
+      <li>两组：离职取舍（保留/删除分段按钮）、逐条归类（采纳建议 + 改判下拉）。</li>
+      <li>组标题右侧"全部采纳建议"批量按钮。</li>
+      <li>卡片点击 → 网格平滑滚动定位并选中。</li>
+    </ul></div>
+    <div class="card"><h4>⑦ 检查器 Inspector</h4><ul class="clean">
+      <li>顶部员工头像 + 全勤徽标。</li>
+      <li>选中日详情：结论 / 原因 / 原始打卡 / 加班算式。</li>
+      <li>本月小结：出勤天数 · 加班合计 · 各类计数 chip · 异常明细列表。</li>
+      <li>空态引导文案。</li>
+    </ul></div>
+    <div class="card"><h4>⑧ 高级设置抽屉</h4><ul class="clean">
+      <li>右侧滑入 380px。</li>
+      <li>不计加班名单 / 个别迟到阈值 / 只红字名单（标签 + 添加）。</li>
+      <li>底部"应用并重算"。</li>
+    </ul></div>
+    <div class="card"><h4>⑨ 导出对话框</h4><ul class="clean">
+      <li>文件名 / 保存路径 / 选项（附图例、全勤紫底）。</li>
+      <li>模态遮罩 rgba(15,23,42,.42)。</li>
+    </ul></div>
+    <div class="card"><h4>⑩ Toast 轻提示</h4><ul class="clean">
+      <li>底部居中，深色 accent-deep 底白字 + 对勾。</li>
+      <li>自动消失 2.2s。改判/取舍/导出后反馈。</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- ============ 7 MOTION ============ -->
+<section id="motion">
+  <div class="h"><span class="n">7</span><h2>动态效果说明</h2></div>
+  <p class="lead">动效都"短、克制、有功能"，绝不炫技。统一缓动 <code>cubic-bezier(.4,0,.2,1)</code>（标准）；强调"系统在替你算"用进度类动画。下表是每条动效的触发、描述与精确参数。</p>
+
+  <div class="motion">
+    <div class="m"><div class="name">改判即时重算 ★</div><div class="desc">点击建议/改判选项后，目标单元<b>立即换色换角标</b>，右侧检查器与左侧进度、底部统计同步刷新；伴随 Toast。这是"所见即所得"的关键体验，必须无感知延迟。</div><div class="spec">单元: 同步重渲染<br>Toast: 200ms<br>无 loading</div></div>
+    <div class="m"><div class="name">Toast 滑入</div><div class="desc">从底部向上 8px 淡入，停留 2.2s 后移除。</div><div class="spec">@keyframes toastIn<br>200ms ease<br>translateY 8→0</div></div>
+    <div class="m"><div class="name">悬浮解释卡</div><div class="desc">悬停单元出现；建议 120ms 淡入 + 4px 上移，避免闪烁。离开即消失。卡片随光标定位并自动翻转。</div><div class="spec">建议 120ms ease-out<br>opacity+translateY</div></div>
+    <div class="m"><div class="name">改判气泡</div><div class="desc">点击待定单元弹出；建议 120ms 缩放淡入（scale .96→1，transform-origin 顶部）。</div><div class="spec">120ms<br>scale .96→1</div></div>
+    <div class="m"><div class="name">网格定位滚动</div><div class="desc">点击左侧待办，网格<b>平滑滚动</b>把目标单元滚到视口中心，并加选中描边+ring。</div><div class="spec">scrollTo smooth<br>居中对齐</div></div>
+    <div class="m"><div class="name">选中态描边</div><div class="desc">2px 石板描边 + 3px 半透明 ring 浮起；建议描边/阴影 120ms 过渡。</div><div class="spec">120ms<br>outline + box-shadow</div></div>
+    <div class="m"><div class="name">进度环 ProgressRing</div><div class="desc">待办处理后，环形进度条 stroke 长度平滑增长，中心剩余数更新。</div><div class="spec">stroke-dasharray<br>400ms ease</div></div>
+    <div class="m"><div class="name">高级设置抽屉</div><div class="desc">从右侧滑入/滑出，遮罩淡入。</div><div class="spec">transform 240ms<br>cubic-bezier(.4,0,.2,1)<br>遮罩 opacity 200ms</div></div>
+    <div class="m"><div class="name">解析中 Loading</div><div class="desc">环形 spinner 持续旋转；下方 4 个步骤逐条点亮（完成打勾，当前脉冲点）。传达"系统在替你算完一切"。</div><div class="spec">spin 1s linear ∞<br>步骤 700ms/条<br>pulse 1s ∞</div></div>
+    <div class="m"><div class="name">拖入区 DropZone</div><div class="desc">拖拽悬停时边框转石板实线、底转 soft、整体轻微高亮。</div><div class="spec">180ms all</div></div>
+    <div class="m"><div class="name">按钮/标签 hover</div><div class="desc">窗口控制、步骤、过滤标签、列表项 hover 切换底色；建议 120–150ms。</div><div class="spec">120–150ms<br>background</div></div>
+    <div class="m"><div class="name">输入聚焦</div><div class="desc">搜索框聚焦边框转石板 accent。</div><div class="spec">即时 / 120ms</div></div>
+  </div>
+
+  <div class="callout" style="margin-top:20px"><span class="ic">◆</span><div><b>无障碍：</b>需响应 <code>prefers-reduced-motion</code>。开启时关闭滑入/缩放/脉冲，仅保留即时状态切换（换色、选中、Toast 直接显隐）。功能性结果绝不依赖动画。</div></div>
+</section>
+
+<!-- ============ 8 STATES ============ -->
+<section id="states">
+  <div class="h"><span class="n">8</span><h2>状态与空态</h2></div>
+  <p class="lead">阶段①"准备"覆盖了所有进入工具时可能遇到的状况，原型右上角"演示状态"可逐一查看。</p>
+  <div class="tbl-scroll">
+  <table>
+    <tr><th>状态</th><th>触发</th><th>表现</th><th>可否开始</th></tr>
+    <tr><td><b>空态</b></td><td>尚未选文件夹</td><td>大号拖入区 + "选择文件夹…"</td><td>—</td></tr>
+    <tr><td><b>解析中</b></td><td>选好文件夹后</td><td>旋转 spinner + 4 步进度文案（约 2.6s）</td><td>进行中</td></tr>
+    <tr><td><b>校验通过</b></td><td>三表齐、月份一致</td><td>绿色 Banner + 文件清单 + 待办数（离职取舍 / 逐条归类）+ "开始复核"</td><td>✓ 可开始</td></tr>
+    <tr><td><b>有警告</b></td><td>打卡原表月份 ≠ 调班表</td><td>琥珀 Banner"月份不一致，请先更换文件"，标红问题行</td><td>✗ 禁用</td></tr>
+    <tr><td><b>缺表</b></td><td>缺少调班表</td><td>红色 Banner"缺少调班表"，清单该行标"缺少此表"</td><td>✗ 禁用</td></tr>
+  </table>
+  </div>
+  <div class="callout warn" style="margin-top:18px"><span class="ic">⚠</span><div><b>"月份不一致"是真实踩过的坑：</b>这是上次真实数据出错的原因，故单独做成醒目警告 + 明确指引，而非泛泛报错。其它空态（搜索无结果、某人本月无异常）也都有专属友好文案。</div></div>
+</section>
+
+<!-- ============ 9 INTERACTION ============ -->
+<section id="interaction">
+  <div class="h"><span class="n">9</span><h2>交互逻辑</h2></div>
+  <p class="lead">核心是一个轻状态机 + 一套"任何决策都触发重算"的数据流。</p>
+
+  <h3>阶段路由</h3>
+  <ul class="clean">
+    <li><code>step ∈ {ready, review, done}</code>；<code>maxStep</code> 记录已解锁的最远步骤，步骤条据此门控。</li>
+    <li>"开始复核" → review 并解锁全部；"完成并汇总" → done；done 可"返回工作台"。</li>
+    <li>支持 <code>#review</code> / <code>#done</code> 哈希直达（便于评审）。</li>
+  </ul>
+
+  <h3>决策 → 重算 数据流 ★</h3>
+  <pre><span class="c">// 任一决策都只改数据，统计由纯函数派生，UI 自动跟随</span>
+<span class="k">reclassify</span>(empId, day, val):   cell.status = val        <span class="c">// 改判归类</span>
+<span class="k">keepDecide</span>(empId, keep):       keepDecisions[id] = keep <span class="c">// 离职取舍</span>
+<span class="k">adoptAll</span>():                    所有 pending → suggest   <span class="c">// 批量采纳</span>
+
+included   = 全体 − 被删除离职者
+stats      = <span class="k">computeStats</span>(employees, included)   <span class="c">// 计数/加班/全勤/异常</span>
+<span class="c">// → 进度环、底部统计、检查器、汇总页 全部重新派生</span></pre>
+
+  <h3>导航辅助</h3>
+  <ul class="clean">
+    <li><b>跳到下一个异常：</b>在 待定/未出勤/缺卡/早退/迟到 单元间循环定位。</li>
+    <li><b>搜索：</b>姓名 / 工号 / 职位 实时过滤行。</li>
+    <li><b>过滤标签：</b>全部 / 有异常 / 待归类（待归类带计数徽标）。</li>
+    <li><b>待办↔网格联动：</b>点待办定位网格；点网格单元选中并填充检查器。</li>
+  </ul>
+
+  <h3>建议加入（路线图）</h3>
+  <p class="muted" style="font-size:13px">下列三项已升级为正式规格，见 <a href="#roadmap" style="color:var(--accent-strong);font-weight:600">第 12 节 · 进阶交互规格</a>。</p>
+  <ul class="clean">
+    <li><b>撤销 / 重做栈</b>（<span class="kbd">Ctrl+Z</span> / <span class="kbd">Ctrl+Y</span>）—— 任何决策可回退。</li>
+    <li><b>键盘流</b> —— <span class="kbd">↑/↓</span> 在待办间移动、<span class="kbd">1/2/3</span> 快速归类、<span class="kbd">Enter</span> 采纳建议。</li>
+    <li><b>本月决策记忆</b> —— 导出时存档，下月一键载入（名单 / 阈值 / 常见公出人）。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 DATA ============ -->
+<section id="data">
+  <div class="h"><span class="n">10</span><h2>数据与计算规则</h2></div>
+  <p class="lead">下面是判定与计算的全部规则，直接对应后端/算法实现。</p>
+
+  <div class="cards cols-2">
+    <div class="card">
+      <h4>员工对象</h4>
+      <pre><span class="k">Employee</span> {
+  id, name, pos, type,   <span class="c">// 正式/实习/外包</span>
+  join?, leave?,         <span class="c">// 入职/离职日</span>
+  cells: { [day]: Cell },
+  punchDays,             <span class="c">// 有打卡天数</span>
+  needsKeepDecision      <span class="c">// 离职且<7天</span>
+}</pre>
+    </div>
+    <div class="card">
+      <h4>单元对象 / 状态枚举</h4>
+      <pre><span class="k">Cell</span> { status, punches[], in, out,
+       ot, note?, reason?, suggest?,
+       swap?, field? }
+status ∈ { normal, late, lateheavy,
+  early, absent, miss, biz, field,
+  pending, rest, holiday, pre, post }</pre>
+    </div>
+  </div>
+
+  <div class="tbl-scroll" style="margin-top:14px">
+  <table>
+    <tr><th>规则</th><th>判定</th></tr>
+    <tr><td><b>迟到</b></td><td>上午打卡 ∈ (09:00, 09:30] → late；> 09:30 → lateheavy。阈值默认 09:00，可在高级设置按人放宽。</td></tr>
+    <tr><td><b>早退</b></td><td>下午打卡 &lt; 18:30 → early。</td></tr>
+    <tr><td><b>缺卡 / 待归类</b></td><td>当天打卡 &lt; 2 次 → pending（待人判）。系统给 suggest：单卡且与连续空白相邻→biz；孤立全空→absent；否则→miss。</td></tr>
+    <tr><td><b>未出勤</b></td><td>工作日全天无打卡且前后正常 → 倾向 absent（仍需确认）。</td></tr>
+    <tr><td><b>公出 / 外勤</b></td><td>公出=人工确认外出公干，计出勤、实底蓝；外勤=打卡带外勤标记，左条+斜纹浅蓝。</td></tr>
+    <tr><td><b>加班 OT</b></td><td><code>mins =(下班 − 18:30)</code>；<code>mins &lt; 50 → 0</code>；否则 <code>max(1, round(mins/60×2)/2)</code>（半小时取整，最低 1h）。<b>不计加班名单</b>内一律 0。</td></tr>
+    <tr><td><b>全勤</b></td><td>本月有出勤且无任一 {late, lateheavy, early, absent, miss, pending} → full；姓名格紫底 + 星标。</td></tr>
+    <tr><td><b>班/休/假</b></td><td>由调班表决定；个人调班(SWAPS)覆盖默认周末；法定假单列。调班来的班 → 左上橙三角。</td></tr>
+    <tr><td><b>纳入范围</b></td><td><code>included = 全体 − 删除的离职者</code>；统计、汇总、导出均以 included 为准。</td></tr>
+  </table>
+  </div>
+</section>
+
+<!-- ============ 11 IMPL ============ -->
+<section id="impl">
+  <div class="h"><span class="n">11</span><h2>实现备注 (PySide6 / Qt)</h2></div>
+  <p class="lead">设计到 Qt 的落地建议，避免常见坑。</p>
+  <div class="cards cols-2">
+    <div class="card"><h4>表格</h4><ul class="clean">
+      <li>用 <code>QTableView</code> + 自定义 <code>QStyledItemDelegate</code> 绘制单元（底色/角标/纹理/双行）。</li>
+      <li>冻结姓名列：叠加一个共享 model 的窄 QTableView，或用 <code>setIndexWidget</code> 方案。</li>
+      <li>表头冻结：QTableView 默认表头随滚，符合需求。</li>
+      <li>双行（打卡/加班）：每人占 2 个 model 行，或单行 delegate 内分区绘制。</li>
+    </ul></div>
+    <div class="card"><h4>浮层</h4><ul class="clean">
+      <li>悬浮解释卡：自绘 <code>QWidget(Qt.ToolTip)</code> 或 frameless popup，跟随 <code>QCursor</code> 并做边界翻转。</li>
+      <li>改判气泡：<code>QMenu</code> 或 frameless <code>QFrame</code> popup。</li>
+      <li>Toast：frameless 顶置 QWidget + <code>QPropertyAnimation</code> 淡入，QTimer 2.2s 关闭。</li>
+      <li>抽屉：父级上做 geometry 动画滑入。</li>
+    </ul></div>
+    <div class="card"><h4>颜色与主题</h4><ul class="clean">
+      <li>把本文件色板做成 <b>QSS 变量表 / Python 常量</b>，delegate 直接取。</li>
+      <li>深色 / 暖白主题 = 切换整套常量并 <code>setStyleSheet</code> 重刷。</li>
+      <li>等宽数字：字体设 <code>StyleStrategy</code> 或选用带 tnum 的字体。</li>
+    </ul></div>
+    <div class="card"><h4>数据流</h4><ul class="clean">
+      <li>判定/计算保持<b>纯函数</b>（computeStats / personSummary / otFormula），决策只改原始 model 后整体重算 —— 与原型一致，便于加撤销栈。</li>
+      <li>导出 Excel：用 <code>openpyxl</code> 写入与界面同色的单元填充 + 图例 sheet。</li>
+    </ul></div>
+  </div>
+  <div class="callout" style="margin-top:20px"><span class="ic">◆</span><div>配套交付物：本说明 + 交互原型 <code>考勤复核工作台.html</code>（可直接点击体验全部状态与动效）+ 图标源文件 / 全套 PNG / 多尺寸 <code>icon.ico</code>（<code>icon/</code>）。原型即"活的规格"，数值有歧义时以原型为准。</div></div>
+</section>
+
+<!-- ============ 12 ROADMAP SPECS ============ -->
+<section id="roadmap">
+  <div class="h"><span class="n">12</span><h2>进阶交互规格</h2></div>
+  <p class="lead">三项进阶能力的正式规格 —— 撤销/重做、键盘流、决策记忆。它们都建立在第 9 节"决策只改 model、统计纯函数派生"的数据流之上，落地成本低。</p>
+
+  <h3>12.1 撤销 / 重做栈 <span class="tag">Ctrl+Z / Ctrl+Y</span></h3>
+  <p class="muted" style="font-size:13px">所有改变 model 的操作进栈，可逐步回退/重做。重算与 UI 刷新沿用既有纯函数链，无需额外逻辑。</p>
+  <div class="cards cols-2">
+    <div class="card">
+      <h4>纳入撤销的操作</h4>
+      <ul class="clean">
+        <li>归类改判 <code>reclassify</code>（含"改判回待定"）。</li>
+        <li>离职取舍 <code>keepDecide</code>（保留/删除）。</li>
+        <li>批量"全部采纳建议" <code>adoptAll</code> —— 作为<b>单条</b>可撤销记录（一次撤销全部回退）。</li>
+        <li>高级设置"应用并重算"（名单/阈值变更）。</li>
+      </ul>
+      <p class="muted" style="font-size:12px;margin:0">不进栈：搜索、过滤、选中、滚动、跳到下一个异常等纯视图操作。</p>
+    </div>
+    <div class="card">
+      <h4>命令模型</h4>
+      <pre><span class="k">Command</span> {
+  label,            <span class="c">// "归类 朱琳 4/14 → 缺卡"</span>
+  before, after,    <span class="c">// 受影响单元的最小快照</span>
+  apply(), revert() <span class="c">// 写回 model 后触发重算</span>
+}
+undoStack: Command[]   redoStack: Command[]
+<span class="c">// 新操作入 undo 并清空 redo；上限 50 步</span></pre>
+    </div>
+  </div>
+  <table style="margin-top:14px">
+    <tr><th>快捷键 / 入口</th><th>行为</th><th>反馈</th></tr>
+    <tr><td class="mono">Ctrl+Z</td><td>撤销栈顶命令，revert 并重算</td><td>Toast "已撤销：{label}"；网格定位到受影响单元</td></tr>
+    <tr><td class="mono">Ctrl+Y / Ctrl+Shift+Z</td><td>重做</td><td>Toast "已重做：{label}"</td></tr>
+    <tr><td>工具栏 ↶ / ↷ 按钮</td><td>同上；栈空时按钮置灰禁用</td><td>悬停显示下一步 label</td></tr>
+  </table>
+  <div class="callout" style="margin-top:14px"><span class="ic">◆</span><div>撤销后单元<b>换色动画沿用第 7 节即时重算</b>（无额外动效），并自动滚动定位到被改的单元，让用户确认"撤回了哪一处"。</div></div>
+
+  <h3>12.2 键盘流 <span class="tag">无鼠标也能跑完复核</span></h3>
+  <p class="muted" style="font-size:13px">面向熟练 HR 的提速路径：焦点在待办清单时，整条复核可纯键盘完成。需有清晰的焦点环（2px 石板描边）。</p>
+  <div class="tbl-scroll">
+  <table>
+    <tr><th>按键</th><th>场景</th><th>行为</th></tr>
+    <tr><td class="mono">↑ / ↓</td><td>待办清单</td><td>在待办卡片间移动焦点，同步在网格中选中并居中定位对应单元</td></tr>
+    <tr><td class="mono">Enter</td><td>聚焦的归类待办</td><td>采纳工具<b>建议</b>值（= 主按钮）</td></tr>
+    <tr><td class="mono">1 / 2 / 3</td><td>聚焦的归类待办</td><td>分别归类为 缺卡 / 公出 / 未出勤</td></tr>
+    <tr><td class="mono">K / J</td><td>聚焦的离职取舍</td><td>K=保留、J=删除</td></tr>
+    <tr><td class="mono">Tab</td><td>全局</td><td>在 待办 → 网格 → 检查器 三栏间切换焦点区</td></tr>
+    <tr><td class="mono">N</td><td>网格聚焦</td><td>跳到下一个异常单元（= "跳到下一个异常"）</td></tr>
+    <tr><td class="mono">/ </td><td>全局</td><td>聚焦搜索框</td></tr>
+    <tr><td class="mono">Esc</td><td>弹层/抽屉/搜索</td><td>关闭浮层 / 清空并失焦搜索</td></tr>
+  </table>
+  </div>
+  <p class="muted" style="font-size:12px;margin-top:10px">处理完一条后焦点<b>自动前进</b>到下一条未决待办，形成"看一眼 → 按 Enter / 数字 → 下一条"的连续节奏。全部处理完，焦点落到工具栏"完成并汇总"。</p>
+
+  <h3>12.3 本月决策记忆 <span class="tag">下月一键载入</span></h3>
+  <p class="muted" style="font-size:13px">月度考勤高度重复（同一批常态公出、同样的不计加班名单）。把"判断"沉淀下来，下月自动预填，把待办量进一步压小。</p>
+  <div class="cards cols-2">
+    <div class="card">
+      <h4>存档内容（导出时写入）</h4>
+      <ul class="clean">
+        <li>不计加班名单、个别迟到阈值、只红字名单。</li>
+        <li>"常态公出人"：被反复判为公出的员工 + 典型模式（如每周三外出）。</li>
+        <li>离职取舍的默认倾向（按员工类型）。</li>
+        <li><b>不存</b>具体某天的判定（每月数据不同）。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>下月载入行为</h4>
+      <ul class="clean">
+        <li>阶段①校验通过后提示："检测到上月决策档，是否载入？"</li>
+        <li>载入后：名单/阈值自动套用；命中"常态公出人"的待定项<b>预选</b>为公出建议（仍需用户确认，不自动定案）。</li>
+        <li>预填项在待办卡片标"沿用上月"徽标，可一键改判。</li>
+      </ul>
+    </div>
+  </div>
+  <pre><span class="k">decisionMemo</span> {  <span class="c">// 存为 考勤_YYYY-MM.memo.json</span>
+  noOtList: [...], lateThresholds: {empId: "09:05"},
+  redOnlyList: [...], habitualBiz: [{empId, pattern}],
+  leaverDefault: {实习: "keep", 外包: "ask"}
+}</pre>
+  <div class="callout warn" style="margin-top:14px"><span class="ic">⚠</span><div><b>原则：记忆只做"预填建议"，绝不"自动定案"。</b>每月仍由人确认，避免把上月的错误判断无声地带到本月 —— 这与产品"机器算、人定夺"的定位一致。</div></div>
+</section>
+
+</main>
+</div>
+</body>
+</html>
