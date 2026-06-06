@@ -4,7 +4,7 @@ import os, sys, shutil, glob
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine, openpyxl
 
-SRC = r'D:\考勤'
+SRC = engine.default_data_dir()
 T = os.path.join(SRC, '_gtest')
 
 MAY = {}

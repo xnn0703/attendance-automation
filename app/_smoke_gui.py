@@ -1,62 +1,92 @@
 # -*- coding: utf-8 -*-
-"""Headless smoke test: drive the GUI handlers (offscreen) end-to-end, no display."""
-import os, sys, shutil, glob
+"""无头端到端冒烟：驱动新三栏工作台全流程（就绪→复核→改判→撤销→完成→导出→决策存载→跨月记忆）。
+需要数据目录（设 KQ_DIR；无真实数据时先跑 app/_make_sample.py 造合成三表）。"""
+import os, sys
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PySide6 import QtWidgets
-import gui, engine, tempfile
+import engine, theme
+import gui
 
-SRC = r'D:\考勤'; T = os.path.join(SRC, '_smoke')
-if os.path.exists(T):
-    shutil.rmtree(T)
-os.makedirs(T)
-for f in glob.glob(os.path.join(SRC, '*.xlsx')):
-    b = os.path.basename(f)
-    if ('初表' in b) or ('考勤' in b):
-        continue
-    if ('原表' in b) or ('花名册' in b) or ('调班' in b):
-        shutil.copy(f, T)
+theme.MOTION = False
+SRC = engine.default_data_dir()
 
-iss = engine.validate(T)
-print('validate(inputs ready):', iss)
-assert iss == [], iss
-_empty = tempfile.mkdtemp()
-iss2 = engine.validate(_empty)
-print('validate(empty dir):', iss2)
-assert iss2, 'empty dir should report issues'
-shutil.rmtree(_empty)
 
-app = QtWidgets.QApplication([])
-w = gui.MainWindow()
-assert w.set_dir(T), 'dir invalid'
-w.confirm_dir()
-w.run_prep()
-print('after prep: kept=%d cand=%d' % (w.kept_tbl.rowCount(), w.cand_tbl.rowCount()))
-w.apply_keep()
-w.run_worklist()
-print('worklist rows=%d' % w.work_tbl.rowCount())
-w.save_classify()
-print('classify size=%d' % len(w.classify))
-w.run_build()
-print('build out exists=%s summary rows=%d preview rows=%d cell_to_key=%d' % (
-    os.path.exists(getattr(w, 'out_path', '')), w.sum_tbl.rowCount(), w.preview.rowCount(), len(w.cell_to_key)))
-assert w.preview.rowCount() == 54, 'preview not rendered'
-assert len(w.cell_to_key) > 0, 'cell_to_key empty (re-judge mapping missing)'
-# 改判→即时重算 路径（绕过模态弹窗，直接改 classify 再 run_build）
-k0 = next(iter(w.cell_to_key.values()))['key']
-w.classify[k0] = 'B'
-w.run_build()
-print('re-judge rebuild: preview rows=%d cell_to_key=%d %s=%s' % (
-    w.preview.rowCount(), len(w.cell_to_key), k0, w.classify[k0]))
-assert w.preview.rowCount() == 54 and len(w.cell_to_key) > 0
-# 保存/载入决策
-w.save_decisions()
-saved = all(os.path.exists(os.path.join(T, n)) for n in ('kq_keep.txt', 'kq_classify.txt', 'kq_config.txt'))
-print('save decisions -> txt exists=%s' % saved)
-assert saved
-w.classify = {}; w.keep = set()
-w.load_decisions()
-print('load back: classify=%d (Y17074|9=%s)' % (len(w.classify), w.classify.get('Y17074|9')))
-assert len(w.classify) > 0 and w.classify.get('Y17074|9') == 'B'
-print('SMOKE OK')
-shutil.rmtree(T)
+def main():
+    if not engine.find_inputs(SRC)['ros']:
+        print('SMOKE SKIP: 数据目录无三表（设 KQ_DIR 或先跑 _make_sample.py）：', SRC)
+        return 0
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app.setStyleSheet(theme.build_qss())
+    w = gui.MainWindow()
+    w.headless = True
+
+    # 阶段① 就绪
+    w.choose_dir(SRC)
+    assert w.ready.btn_start.isEnabled(), '就绪页未通过校验'
+
+    # 阶段② 复核
+    w.begin_review()
+    assert w.data and w.data['employees'], 'analyze 无数据'
+    n_people = len(w.data['employees'])
+    pend0 = w.data['stats']['pending']
+    print('就绪→复核：people=%d pending=%d' % (n_people, pend0))
+
+    # 选中联动
+    gh0 = w.data['employees'][0]['gh']
+    w.on_cell_selected(gh0, 8)
+    assert w.active == (gh0, 8), '选中联动失败'
+
+    # 改判即时重算
+    if pend0:
+        case = w.data['pending'][0]
+        w.do_reclassify(case['gh'], case['day'], 'B')
+        assert w.data['stats']['pending'] == pend0 - 1, '改判未减少待归类'
+        # 撤销 / 重做
+        w.undo_action()
+        assert w.data['stats']['pending'] == pend0, '撤销未恢复'
+        w.redo_action()
+        assert w.data['stats']['pending'] == pend0 - 1, '重做未生效'
+
+    # 批量采纳 → pending 0
+    w.do_adopt_all()
+    assert w.data['stats']['pending'] == 0, '批量采纳后仍有待归类'
+
+    # 搜索 / 筛选
+    g = w.workbench.grid
+    g._on_filter('anomaly')
+    g._on_filter('all')
+    g.goto_next_anomaly()
+    assert w.active is not None, '跳异常未定位'
+
+    # 高级设置抽屉
+    w.show_drawer()
+    assert not w.drawer.isHidden(), '抽屉未打开'
+    w.apply_config({'excl': set(), 'strict': {}, 'font_only': set()})
+    assert w.drawer.isHidden(), '应用配置后抽屉未关闭'
+
+    # 阶段③ 完成 + 导出
+    w.goto_done()
+    assert w.stack.currentIndex() == gui.DONE
+    w.do_export()
+    assert os.path.exists(w.out_path), '导出文件不存在'
+
+    # 决策存载 + 跨月记忆
+    w.save_decisions()
+    assert all(os.path.exists(os.path.join(SRC, f)) for f in
+               ('kq_keep.txt', 'kq_classify.txt', 'kq_config.txt', 'kq_memory.json')), '决策/记忆未写盘'
+
+    print('SMOKE OK: people=%d pending(after adopt)=%d out=%s memory=%s' % (
+        n_people, w.data['stats']['pending'], os.path.basename(w.out_path),
+        memory_summary()))
+    return 0
+
+
+def memory_summary():
+    import memory
+    m = memory.load(SRC)
+    return 'habitualBiz=%s' % (m.get('habitualBiz') if m else None)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

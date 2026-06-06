@@ -12,6 +12,11 @@ SUF = '（离职）'
 LIZHI = '离职'
 WAIQIN = '外勤'
 
+# ---------- data dir (cross-platform default) ----------
+def default_data_dir():
+    """默认数据目录：优先环境变量 KQ_DIR；否则 Windows=D:\\考勤、其它平台=~/考勤。"""
+    return os.environ.get('KQ_DIR') or (r'D:\考勤' if os.name == 'nt' else os.path.expanduser('~/考勤'))
+
 # ---------- file discovery ----------
 def find_inputs(d):
     def find(tok, *nots):
@@ -465,9 +470,189 @@ def build(d, classify=None, config=None):
     return {'out': out, 'year': ctx['y'], 'month': ctx['mo'], 'summary': summary, 'cells': cells_meta,
             'total_ot': sum(x['ot'] for x in summary), 'quan_count': sum(1 for x in summary if x['quan'])}
 
+# ==================== STAGE: analyze (结构化导出，供 GUI 渲染) ====================
+# 复用上面所有判定函数，把每人每天的判定结果导出成结构化 status，不写 xlsx。
+# status 取值（与设计稿语义对齐；底色/红字保证与 day_style 一致，见 _status_fill/自检）：
+#   normal 正常 · late 迟到(红字) · lateheavy 迟到较重(红底) · early 早退(红底)
+#   absent 未出勤(红底) · miss 缺卡(绿底) · biz 公出(蓝底) · field 外勤日(蓝底)
+#   pending 待归类 · rest 休息/非工作日 · pre 入职前 · post 离职后
+ANOMALY_STATUS = ('late', 'lateheavy', 'early', 'absent', 'miss', 'pending')
+# status -> Excel 底色（None=不填），用于与 day_style 自检；pending 按建议值另算
+_STATUS_FILL = {'absent': RED, 'miss': GREEN, 'biz': BLUE, 'lateheavy': RED, 'early': RED,
+                'field': BLUE, 'late': None, 'normal': None, 'rest': None, 'pre': None, 'post': None}
+
+
+def _hhmm(m):
+    if m is None:
+        return None
+    m %= 1440
+    return '%02d:%02d' % (m // 60, m % 60)
+
+
+def _punch_times(txt):
+    out = []
+    for ln in s(txt).split('\n'):
+        mt = re.search(r'(\d{1,2}):(\d{2})', ln)
+        if mt:
+            out.append('%02d:%02d' % (int(mt.group(1)), int(mt.group(2))))
+    return out
+
+
+def _late_threshold(gh, win, dd, cfg):
+    """该格的迟到底色阈值（分钟）；font_only / 入职当天 → 极大值（仅红字、不上底色）。"""
+    thr = cfg['strict'].get(gh, 570)
+    if gh in cfg['font_only'] or (win['j'] is not None and dd == win['j']):
+        thr = 100000
+    return thr
+
+
+def analyze(d, classify=None, config=None):
+    """读《初表》+花名册+调班表 → 结构化逐格判定（复用 day_style/ot_val 等），供 GUI 渲染。"""
+    ctx = _load_people(d)
+    cls = classify if classify is not None else read_classify(d)
+    cfg = config if config is not None else read_config(d)
+    y, mo, days = ctx['y'], ctx['mo'], ctx['days']
+    cal, roster = ctx['cal'], ctx['roster']
+    calendar = [{'day': dd, 'weekday': datetime.date(y, mo, dd).weekday(),
+                 'is_work': dd in cal['base']} for dd in range(1, days + 1)]
+    employees = []
+    counts = {k: 0 for k in ('late', 'lateheavy', 'early', 'absent', 'miss', 'biz', 'field')}
+    ot_total = 0.0
+    pending_total = 0
+    full_set = set()
+    anomaly_set = set()
+    for p in ctx['ppl']:
+        bare = p['bare']
+        gh = p['gh']
+        win = window(roster, bare, y, mo, days)
+        ros = ros_of(roster, bare)
+        is_excl = gh in cfg['excl']
+        cells = {}
+        quan = True
+        ot_sum = 0.0
+        has_attendance = False
+        for dd in range(1, days + 1):
+            txt = p['dmap'][dd]
+            if dd < win['s'] or dd > win['e']:
+                cells[dd] = {'status': 'pre' if dd < win['s'] else 'post'}
+                continue
+            is_w = is_work(cal, bare, dd)
+            swap = (bare in cal['swap'] and dd in cal['swap'][bare])
+            pi = parse_day(txt)
+            punches = _punch_times(txt)
+            ot = ot_val(pi, is_w, is_excl)
+            cell = {'punches': punches, 'in': (punches[0] if punches else None),
+                    'out': (punches[-1] if punches else None), 'ot': ot, 'wq': pi['wq'],
+                    'swap': swap, 'late_font': False}
+            if not is_w:                                   # 非工作日
+                if pi['cnt'] >= 2 and pi['wq']:
+                    cell['status'] = 'field'
+                    cell['reason'] = '节假日外勤打卡'
+                elif pi['cnt'] >= 1:
+                    cell['status'] = 'normal'
+                    cell['reason'] = '休息日打卡（加班）' if ot > 0 else '休息日打卡'
+                else:
+                    cell['status'] = 'rest'
+                    cell['reason'] = '休息'
+            elif pi['cnt'] < 2:                            # 工作日 <2 次 → 归类/待定
+                k = cls.get('%s|%d' % (gh, dd))
+                sug = 'R' if pi['cnt'] == 0 else 'G'
+                if k is None:
+                    cell['status'] = 'pending'
+                    cell['suggest'] = sug
+                    cell['reason'] = '工作日打卡 %d 次，待归类（建议：%s）' % (
+                        pi['cnt'], {'R': '未出勤', 'G': '缺卡', 'B': '公出'}[sug])
+                else:
+                    cell['status'] = {'R': 'absent', 'G': 'miss', 'B': 'biz'}.get(k, 'biz')
+                    cell['reason'] = '工作日打卡 %d 次 → %s' % (
+                        pi['cnt'], {'absent': '未出勤', 'miss': '缺卡', 'biz': '公出'}[cell['status']])
+            else:                                          # 工作日 ≥2 次
+                thr = _late_threshold(gh, win, dd, cfg)
+                f, le = pi['first'], pi['le']
+                mild = f is not None and 540 < f <= thr
+                heavy = f is not None and f > thr
+                early = le is not None and le < 1110
+                cell['late_font'] = mild
+                if pi['wq']:                               # 工作日外勤 → 蓝底（迟到仅红字，不判早退）
+                    cell['status'] = 'field'
+                    cell['reason'] = '外勤日' + ('（首卡 %s 迟到）' % _hhmm(f) if mild else '')
+                elif heavy:
+                    cell['status'] = 'lateheavy'
+                    cell['reason'] = '首卡 %s 晚于 %s → 迟到较重（底色红）' % (_hhmm(f), _hhmm(thr))
+                    if early:
+                        cell['reason'] += '；末卡 %s 早于 18:30（早退）' % _hhmm(le)
+                elif early:
+                    cell['status'] = 'early'
+                    cell['reason'] = '末卡 %s 早于 18:30 → 早退（底色红）' % _hhmm(le)
+                    if mild:
+                        cell['reason'] += '；首卡 %s 迟到（字体红）' % _hhmm(f)
+                elif mild:
+                    cell['status'] = 'late'
+                    cell['reason'] = '首卡 %s 晚于 09:00 → 迟到（字体红）' % _hhmm(f)
+                else:
+                    cell['status'] = 'normal'
+                    cell['reason'] = '正常出勤'
+            st = cell['status']
+            if st in ('normal', 'field') and pi['cnt'] >= 1:
+                has_attendance = True
+            if st in counts:
+                counts[st] += 1
+            if st == 'pending':
+                pending_total += 1
+            if st in ANOMALY_STATUS:
+                anomaly_set.add(gh)
+            if ot > 0:
+                ot_sum += ot
+                ot_total += ot
+            if is_w and breaks_quan(pi, gh, dd, is_w, cls):
+                quan = False
+            cells[dd] = cell
+        full = quan and has_attendance
+        if full:
+            full_set.add(gh)
+        employees.append({
+            'gh': gh, 'ghn': p['ghn'], 'name': bare, 'row': p['row'],
+            'pos': (ros['zhiwei'] if ros else ''), 'yong': (ros['yong'] if ros else ''),
+            'join': in_month_day(ros['ruzhi'], y, mo) if ros else None,
+            'leave': in_month_day(ros['lizhi'], y, mo) if ros else None,
+            'win': win, 'punch_days': sum(1 for dd in range(1, days + 1)
+                                          if parse_day(p['dmap'][dd])['cnt'] > 0),
+            'leaver': bool(ros and ros['yong'] == LIZHI), 'is_excl': is_excl,
+            'ot': ot_sum, 'full': full, 'cells': cells})
+    employees.sort(key=lambda e: e['ghn'])
+    full_list = [e['name'] for e in employees if e['full']]
+    stats = {'people': len(employees), 'counts': counts, 'ot_total': ot_total,
+             'pending': pending_total, 'full_list': full_list,
+             'full_set': full_set, 'anomaly_set': anomaly_set}
+    return {'year': y, 'month': mo, 'days': days, 'calendar': calendar,
+            'employees': employees, 'pending': worklist(d)['cases'], 'stats': stats}
+
+
+def status_excel_fill(cell):
+    """把 analyze 的格 cell 反推 Excel (fill, font_red)，用于与 day_style 自检比对。
+    pending 用建议值映射（与 build 未归类时一致）。"""
+    st = cell.get('status')
+    if st == 'pending':
+        return ({'R': RED, 'G': GREEN}.get(cell.get('suggest'), GREEN), False)
+    return (_STATUS_FILL.get(st), bool(cell.get('late_font')))
+
+
+def person_summary(emp):
+    """单人月度小结：出勤/加班/各类计数/全勤。"""
+    c = {k: 0 for k in ('late', 'lateheavy', 'early', 'absent', 'miss', 'biz', 'field', 'pending')}
+    work_days = 0
+    for cell in emp['cells'].values():
+        st = cell.get('status')
+        if st in c:
+            c[st] += 1
+        if st in ('normal', 'late', 'lateheavy', 'early', 'field', 'miss', 'biz'):
+            work_days += 1
+    return {'ot': emp['ot'], 'counts': c, 'work_days': work_days, 'full': emp['full']}
+
+
 if __name__ == '__main__':
     import sys
-    dd = sys.argv[2] if len(sys.argv) > 2 else r'D:\考勤'
+    dd = sys.argv[2] if len(sys.argv) > 2 else default_data_dir()
     stage = sys.argv[1] if len(sys.argv) > 1 else 'build'
     if stage == 'prep':
         rpt = prep(dd, read_keep(dd))

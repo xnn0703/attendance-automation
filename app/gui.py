@@ -1,417 +1,519 @@
 # -*- coding: utf-8 -*-
-"""南京六部考勤 GUI 上位机 (PySide6)。5 步向导，调用已验证的 engine。"""
-import sys, os, datetime
-from PySide6 import QtWidgets, QtCore, QtGui
-import openpyxl
+"""南京六部考勤 GUI 上位机 (PySide6) —— 三阶段三栏「活的彩色工作台」。
+入口 + MainWindow：阶段路由(QStackedWidget) + 顶部状态条 + recompute 重算中枢 + 信号槽编排。
+业务判定全部走 engine（权威），界面只做展示与交互。"""
+import sys, os, subprocess
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtCore import Qt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
+import theme
+import undo
+import memory
+from widgets import Stepper, Toast, Chip2
+from panels import ReadyView, Workbench, Dashboard, AdvancedDrawer
 
-WEEK = '一二三四五六日'
-CLS_DISP = {'G': '缺卡', 'B': '公出', 'R': '未出勤'}
-DISP_CLS = {v: k for k, v in CLS_DISP.items()}
+VAL_CN = {'R': '未出勤', 'G': '缺卡', 'B': '公出'}
+
+READY, REVIEW, DONE = 0, 1, 2
 
 
-def weekday_cn(y, m, d):
-    return WEEK[datetime.date(y, m, d).weekday()]
-
-
-def col_letter(n):
-    s = ''
-    while n > 0:
-        n, r = divmod(n - 1, 26)
-        s = chr(65 + r) + s
-    return s
+def _open_file(path):
+    """跨平台用系统默认程序打开文件（Windows/macOS/Linux）。"""
+    if sys.platform == 'win32':
+        os.startfile(path)
+    elif sys.platform == 'darwin':
+        subprocess.run(['open', path])
+    else:
+        subprocess.run(['xdg-open', path])
 
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('南京六部考勤 上位机')
-        self.resize(960, 680)
+        self.setWindowTitle('南京六部考勤 · 工作台')
+        self.resize(1280, 800)
+        self.headless = False
+        # ---- 状态 ----
         self.dir = None
+        self.data = None
         self.keep = set()
         self.classify = {}
-        self.cell_to_key = {}
-        self.headless = False
         self.config = engine.default_config()
-        self.worklist_data = None
+        self.leaver_cands = []
+        self.active = None          # (gh, day)
+        self.search = ''
+        self.filter = 'all'
+        self.out_path = None
+        self.undo = undo.UndoStack()
+        self.kbd_idx = -1           # 键盘流当前待办指针
+        self.memory = None          # 跨月决策档
 
-        central = QtWidgets.QWidget(); self.setCentralWidget(central)
-        v = QtWidgets.QVBoxLayout(central)
-        topbar = QtWidgets.QHBoxLayout()
-        bsave = QtWidgets.QPushButton('保存决策→目录'); bsave.clicked.connect(self.save_decisions)
-        bload = QtWidgets.QPushButton('从目录载入决策'); bload.clicked.connect(self.load_decisions)
-        topbar.addWidget(bsave); topbar.addWidget(bload)
-        topbar.addWidget(QtWidgets.QLabel('（决策=保留名单+归类+配置，存为 kq_*.txt，与 skill 通用）')); topbar.addStretch(1)
-        v.addLayout(topbar)
-        self.tabs = QtWidgets.QTabWidget(); v.addWidget(self.tabs, 1)
-        self.tabs.addTab(self._tab_dir(), '① 选目录')
-        self.tabs.addTab(self._tab_prep(), '② 整理')
-        self.tabs.addTab(self._tab_class(), '③ 归类')
-        self.tabs.addTab(self._tab_config(), '④ 配置')
-        self.tabs.addTab(self._tab_build(), '⑤ 生成')
-        for i in (1, 2, 3, 4):
-            self.tabs.setTabEnabled(i, False)
+        root = QtWidgets.QWidget()
+        root.setObjectName('root')
+        self.setCentralWidget(root)
+        v = QtWidgets.QVBoxLayout(root)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
 
-        self.logbox = QtWidgets.QPlainTextEdit(readOnly=True)
-        self.logbox.setMaximumHeight(150)
-        v.addWidget(QtWidgets.QLabel('日志：'))
-        v.addWidget(self.logbox)
+        # ---- 顶部 Toolbar（单行：Stepper 左 + Chip2/按钮 右，52px）----
+        toolbar = QtWidgets.QFrame()
+        toolbar.setObjectName('toolbar')
+        toolbar.setStyleSheet('QFrame#toolbar{background:%s;border-bottom:1px solid %s;}' % (theme.SURFACE, theme.LINE))
+        toolbar.setFixedHeight(52)
+        tb = QtWidgets.QHBoxLayout(toolbar)
+        tb.setContentsMargins(8, 0, 14, 0)
+        tb.setSpacing(10)
+        self.stepper = Stepper()
+        self.stepper.stepClicked.connect(self.goto_step)
+        tb.addWidget(self.stepper)
+        tb.addStretch(1)
+        self.ready_hint = QtWidgets.QLabel('选择文件夹后自动就绪')
+        self.ready_hint.setStyleSheet('color:%s;font-size:11.5px;' % theme.INK_3)
+        tb.addWidget(self.ready_hint)
+        self.chip_dir = Chip2('', mono=True)
+        self.chip_meta = Chip2('')
+        self.chip_todo = Chip2('', tone='accent')
+        for c in (self.chip_dir, self.chip_meta, self.chip_todo):
+            c.hide()
+            tb.addWidget(c)
+        self.btn_undo = QtWidgets.QPushButton('↶')
+        self.btn_redo = QtWidgets.QPushButton('↷')
+        for b in (self.btn_undo, self.btn_redo):
+            b.setProperty('ghost', '1')
+            b.setEnabled(False)
+            b.setFixedWidth(32)
+            b.hide()
+        self.btn_undo.clicked.connect(self.undo_action)
+        self.btn_redo.clicked.connect(self.redo_action)
+        self.btn_done = QtWidgets.QPushButton('完成并汇总  →')
+        self.btn_done.setProperty('primary', '1')
+        self.btn_done.setEnabled(False)
+        self.btn_done.hide()
+        self.btn_done.clicked.connect(self.goto_done)
+        tb.addWidget(self.btn_undo)
+        tb.addWidget(self.btn_redo)
+        tb.addWidget(self.btn_done)
+        v.addWidget(toolbar)
 
-    def log(self, m):
-        self.logbox.appendPlainText(str(m))
-        QtWidgets.QApplication.processEvents()
+        # ---- 阶段栈 ----
+        self.stack = QtWidgets.QStackedWidget()
+        self.ready = ReadyView()
+        self.workbench = Workbench()
+        self.dashboard = Dashboard()
+        self.stack.addWidget(self.ready)
+        self.stack.addWidget(self.workbench)
+        self.stack.addWidget(self.dashboard)
+        v.addWidget(self.stack, 1)
+
+        # ---- Toast ----
+        self.toast_w = Toast(root)
+
+        # ---- 高级设置抽屉 + 背景遮罩 ----
+        self.backdrop = QtWidgets.QWidget(root)
+        self.backdrop.setStyleSheet('background:rgba(15,23,42,0.42);')
+        self.backdrop.hide()
+        self.backdrop.mousePressEvent = lambda e: self.hide_drawer()
+        self.drawer = AdvancedDrawer(root)
+        self.drawer.hide()
+        self.drawer.closed.connect(self.hide_drawer)
+        self.drawer.applied.connect(self.apply_config)
+
+        # ---- 信号 ----
+        self.ready.dirChosen.connect(self.choose_dir)
+        self.ready.startReview.connect(self.begin_review)
+        self.workbench.todo.locate.connect(self.on_locate)
+        self.workbench.todo.reclassify.connect(self.do_reclassify)
+        self.workbench.todo.keepDecide.connect(self.do_keep)
+        self.workbench.todo.adoptAll.connect(self.do_adopt_all)
+        self.workbench.grid.cellSelected.connect(self.on_cell_selected)
+        self.workbench.grid.reclassify.connect(self.do_reclassify)
+        self.workbench.todo.openAdvanced.connect(self.show_drawer)
+        self.dashboard.exportRequested.connect(self.do_export)
+        self.dashboard.openRequested.connect(self.open_result)
+        self.dashboard.backRequested.connect(lambda: self.goto_step(REVIEW))
+        self.dashboard.saveDecisions.connect(self.save_decisions)
+        self.dashboard.loadDecisions.connect(self.load_decisions)
+
+        self._sync_stepper()
+
+        # ---- 快捷键 ----
+        self._add_shortcut('Ctrl+Z', self.undo_action)
+        self._add_shortcut('Ctrl+Y', self.redo_action)
+        self._add_shortcut('Ctrl+Shift+Z', self.redo_action)
+        self._add_shortcut('Ctrl+E', self.do_export)
+        self._add_shortcut('/', self._focus_search)
+        self._add_shortcut('N', self.workbench.grid.goto_next_anomaly)
+        self._add_shortcut('Escape', self._on_escape)
+
+    def _add_shortcut(self, seq, slot):
+        sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
+        sc.activated.connect(slot)
+        return sc
+
+    # ---------------- 工具 ----------------
+    def toast(self, msg):
+        self.toast_w.show_msg(msg)
 
     def err(self, e):
-        self.log('错误：%s' % e)
-        if not self.headless:
+        if self.headless:
+            print('ERROR:', e)
+        else:
             QtWidgets.QMessageBox.critical(self, '错误', str(e))
 
-    # ---------- ① select dir ----------
-    def _tab_dir(self):
-        w = QtWidgets.QWidget(); g = QtWidgets.QVBoxLayout(w)
-        row = QtWidgets.QHBoxLayout()
-        self.dir_edit = QtWidgets.QLineEdit(readOnly=True)
-        b = QtWidgets.QPushButton('浏览…'); b.clicked.connect(self.browse)
-        row.addWidget(QtWidgets.QLabel('数据目录：')); row.addWidget(self.dir_edit, 1); row.addWidget(b)
-        g.addLayout(row)
-        self.files_tbl = QtWidgets.QTableWidget(5, 2)
-        self.files_tbl.setHorizontalHeaderLabels(['输入表', '识别结果'])
-        self.files_tbl.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        g.addWidget(self.files_tbl)
-        self.warn_lbl = QtWidgets.QLabel(''); self.warn_lbl.setWordWrap(True); self.warn_lbl.setStyleSheet('color:#b00;')
-        g.addWidget(self.warn_lbl)
-        self.btn_confirm = QtWidgets.QPushButton('确认目录，进入整理 →')
-        self.btn_confirm.clicked.connect(self.confirm_dir); self.btn_confirm.setEnabled(False)
-        g.addWidget(self.btn_confirm)
-        return w
+    def _sync_stepper(self):
+        cur = self.stack.currentIndex()
+        mx = DONE if self.data is not None else (READY if self.dir is None else REVIEW)
+        self.stepper.set_state(cur, mx)
+        in_wb = self.data is not None and cur in (REVIEW, DONE)
+        self.ready_hint.setVisible(not in_wb)
+        for c in (self.chip_dir, self.chip_meta, self.chip_todo):
+            c.setVisible(in_wb)
+        self.btn_done.setVisible(cur == REVIEW and self.data is not None)
+        self.btn_undo.setVisible(cur == REVIEW)
+        self.btn_redo.setVisible(cur == REVIEW)
+        self.btn_done.setEnabled(self.data is not None and cur == REVIEW)
 
-    def browse(self):
-        d = QtWidgets.QFileDialog.getExistingDirectory(self, '选择含三张输入表的目录', os.getcwd())
-        if d:
-            self.set_dir(d)
-
-    def set_dir(self, d):
-        self.dir = d; self.dir_edit.setText(d)
+    # ---------------- 阶段① 就绪 ----------------
+    def choose_dir(self, d):
+        self.dir = d
+        self.chip_dir.setText(os.path.basename(d.rstrip('/')) or d)
+        self.ready.set_dir_text(d)
         inp = engine.find_inputs(d)
-        labels = [('原表(钉钉打卡)', 'yuan'), ('员工花名册', 'ros'), ('调班表', 'tiao'),
-                  ('初表(中间件)', 'chu'), ('考勤(成品)', 'kao')]
-        for i, (lab, key) in enumerate(labels):
-            self.files_tbl.setItem(i, 0, QtWidgets.QTableWidgetItem(lab))
-            val = os.path.basename(inp[key]) if inp[key] else '✗ 未找到'
-            self.files_tbl.setItem(i, 1, QtWidgets.QTableWidgetItem(('✓ ' + val) if inp[key] else val))
-        ok = bool(inp['yuan'] and inp['ros'] and inp['tiao'])
-        self.btn_confirm.setEnabled(ok)
+        self.ready.set_recognition(inp)
+        miss = []
+        if not inp['ros']:
+            miss.append('花名册')
+        if not inp['tiao']:
+            miss.append('调班表')
+        if not inp['yuan'] and not inp['chu']:
+            miss.append('原表')
+        if miss:
+            self.ready.set_state('err', '缺少「%s」' % '、'.join(miss), '该表缺失将无法判断当月班休/对齐人员，请补齐后重新选择文件夹。', can_start=False)
+            self._sync_stepper()
+            return
         try:
             issues = engine.validate(d)
         except Exception as e:
             issues = ['校验异常：%s' % e]
-        self.warn_lbl.setText(('⚠ ' + '；'.join(issues)) if issues else '✓ 输入检查通过')
-        self.log('目录：%s（原表%s 花名册%s 调班表%s）%s' % (
-            d, '✓' if inp['yuan'] else '✗', '✓' if inp['ros'] else '✗', '✓' if inp['tiao'] else '✗',
-            ('｜⚠ ' + '；'.join(issues)) if issues else '｜✓ 检查通过'))
-        return ok
-
-    def confirm_dir(self):
-        self.config = engine.read_config(self.dir)
-        if os.path.exists(os.path.join(self.dir, 'kq_keep.txt')):
-            self.keep = engine.read_keep(self.dir)
-        if os.path.exists(os.path.join(self.dir, 'kq_classify.txt')):
-            self.classify = engine.read_classify(self.dir)
-        self.refresh_config_fields()
-        if self.classify or self.keep:
-            self.log('已载入既有决策：归类 %d、保留 %d' % (len(self.classify), len(self.keep)))
-        self.tabs.setTabEnabled(1, True); self.tabs.setCurrentIndex(1)
-        self.log('目录已确认，请运行整理。')
-
-    # ---------- ② prep ----------
-    def _tab_prep(self):
-        w = QtWidgets.QWidget(); g = QtWidgets.QVBoxLayout(w)
-        b = QtWidgets.QPushButton('运行整理（生成《初表》）'); b.clicked.connect(self.run_prep)
-        g.addWidget(b)
-        g.addWidget(QtWidgets.QLabel('纳入名单：'))
-        self.kept_tbl = QtWidgets.QTableWidget(0, 4)
-        self.kept_tbl.setHorizontalHeaderLabels(['工号', '姓名', '用工类型', '打卡天数'])
-        g.addWidget(self.kept_tbl, 1)
-        g.addWidget(QtWidgets.QLabel('离职且打卡<7天 —— 勾选要【保留】的（保留则只算到离职日；不勾=删除）：'))
-        self.cand_tbl = QtWidgets.QTableWidget(0, 4)
-        self.cand_tbl.setHorizontalHeaderLabels(['保留', '姓名', '工号', '打卡天数'])
-        g.addWidget(self.cand_tbl)
-        self.lbl_dropped = QtWidgets.QLabel('删除：—'); self.lbl_dropped.setWordWrap(True)
-        g.addWidget(self.lbl_dropped)
-        b2 = QtWidgets.QPushButton('应用保留并重生成《初表》，进入归类 →'); b2.clicked.connect(self.apply_keep)
-        g.addWidget(b2)
-        return w
-
-    def _do_prep(self):
-        rpt = engine.prep(self.dir, self.keep)
-        self.kept_tbl.setRowCount(len(rpt['kept']))
-        for i, p in enumerate(rpt['kept']):
-            for j, val in enumerate([p['gh'], p['name'], p['yong'], str(p['pd'])]):
-                self.kept_tbl.setItem(i, j, QtWidgets.QTableWidgetItem(val))
-        self.cand_tbl.setRowCount(len(rpt['lizhi_candidates']))
-        for i, c in enumerate(rpt['lizhi_candidates']):
-            chk = QtWidgets.QTableWidgetItem(); chk.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
-            chk.setCheckState(QtCore.Qt.Checked if c['kept'] else QtCore.Qt.Unchecked)
-            self.cand_tbl.setItem(i, 0, chk)
-            for j, val in enumerate([c['name'], c['gh'], str(c['pd'])]):
-                self.cand_tbl.setItem(i, j + 1, QtWidgets.QTableWidgetItem(val))
-        self.lbl_dropped.setText('删除（%d）：%s' % (len(rpt['dropped']), '；'.join(rpt['dropped'])))
-        self.log('整理完成：纳入 %d 人，删除 %d，离职<7天候选 %d。' % (
-            len(rpt['kept']), len(rpt['dropped']), len(rpt['lizhi_candidates'])))
-        return rpt
-
-    def run_prep(self):
+        if any('月份' in s for s in issues):
+            self.ready.set_state('warn', '月份不一致 — 请先更换文件', '；'.join(issues), can_start=False)
+            self._sync_stepper()
+            return
+        # 跨月决策档：检测到则套用名单/阈值
+        self.memory = memory.load(d)
+        memo_note = ''
+        if self.memory:
+            self.config = memory.to_config(self.memory)
+            memo_note = '已检测到上月决策档，沿用名单/阈值与公出习惯。'
+        # 三表齐 → prep 预览待办数（顺便生成初表）
         try:
-            self._do_prep()
+            people = 0
+            if inp['yuan']:
+                rep = engine.prep(d, self.keep)
+                self.leaver_cands = rep['lizhi_candidates']
+                people = len(rep['kept'])
+            wl = engine.worklist(d)
+            body = '《初表》已整理，能自动算的（工作日/加班/迟到/外勤/全勤）已全部算完。' + memo_note
+            self.ready.set_state('ok', '三张表均已识别，月份一致', body,
+                                 people=people, month=wl['month'],
+                                 leaver_n=len(self.leaver_cands), pending_n=len(wl['cases']),
+                                 can_start=True)
+        except Exception as e:
+            self.ready.set_state('err', '解析失败', str(e), can_start=False)
+        self._sync_stepper()
+
+    def begin_review(self):
+        try:
+            self.recompute()
+        except Exception as e:
+            self.err(e)
+            return
+        self.stack.setCurrentIndex(REVIEW)
+        self._sync_stepper()
+        self.toast('已就绪，请在工作台复核')
+
+    # ---------------- 重算中枢 ----------------
+    def recompute(self):
+        self.data = engine.analyze(self.dir, self.classify, self.config)
+        # 跨月记忆：常态公出人的待定项 → 预选公出建议（仅预填，仍需确认）
+        hb = memory.habitual_biz(self.memory)
+        if hb:
+            for c in self.data['pending']:
+                if c['gh'] in hb and c['key'] not in self.classify:
+                    c['suggest'] = 'B'
+                    c['memo'] = True
+        st = self.data['stats']
+        self.chip_meta.setText('%d 月 · %d 人 · 加班 %g h' % (self.data['month'], st['people'], st['ot_total']))
+        done = sum(1 for c in self.leaver_cands if c['gh'] in self.keep) + \
+            sum(1 for c in self.data['pending'] if c['key'] in self.classify)
+        total = len(self.leaver_cands) + len(self.data['pending'])
+        self.chip_todo.setText('待办 %d/%d' % (done, total))
+        self.chip_todo.set_tone('ok' if done == total else 'accent')
+        # 刷新三栏
+        self.workbench.todo.refresh(self.data, self.leaver_cands, self.keep, self.classify)
+        self.workbench.grid.set_data(self.data, self.search, self.filter)
+        if self.active:
+            self.workbench.inspector.show_cell(self.data, *self.active)
+
+    # ---------------- 决策动作（撤销栈包裹）----------------
+    def _after_decision(self, label, before):
+        after = undo.snapshot(self.classify, self.keep, self.config)
+        self.undo.push(undo.Command(label, before, after))
+        self.recompute()
+        self._update_undo_buttons()
+        self.toast(label + '，已重算')
+
+    def do_reclassify(self, gh, day, val):
+        before = undo.snapshot(self.classify, self.keep, self.config)
+        self.classify['%s|%d' % (gh, day)] = val
+        self._after_decision('归类 %s %d日 → %s' % (gh, day, VAL_CN.get(val, val)), before)
+
+    def do_keep(self, gh, keep):
+        before = undo.snapshot(self.classify, self.keep, self.config)
+        if keep:
+            self.keep.add(gh)
+        else:
+            self.keep.discard(gh)
+        try:
+            engine.prep(self.dir, self.keep)
+        except Exception as e:
+            self.err(e)
+            return
+        self._after_decision('离职取舍 %s → %s' % (gh, '保留' if keep else '删除'), before)
+
+    def do_adopt_all(self):
+        before = undo.snapshot(self.classify, self.keep, self.config)
+        wl = engine.worklist(self.dir)
+        n = 0
+        for c in wl['cases']:
+            if c['key'] not in self.classify:
+                self.classify[c['key']] = c['suggest']
+                n += 1
+        self._after_decision('批量采纳建议 %d 项' % n, before)
+
+    # ---------------- 撤销 / 重做 ----------------
+    def _restore(self, state):
+        self.classify = dict(state['classify'])
+        self.keep = set(state['keep'])
+        self.config = {'excl': set(state['config']['excl']), 'strict': dict(state['config']['strict']),
+                       'font_only': set(state['config']['font_only'])}
+        try:
+            engine.prep(self.dir, self.keep)
+        except Exception:
+            pass
+        self.recompute()
+        if self.stack.currentIndex() == DONE:
+            self.dashboard.refresh(self.data)
+        self._update_undo_buttons()
+
+    def undo_action(self):
+        cmd = self.undo.undo()
+        if cmd:
+            self._restore(cmd.before)
+            self.toast('已撤销：' + cmd.label)
+
+    def redo_action(self):
+        cmd = self.undo.redo()
+        if cmd:
+            self._restore(cmd.after)
+            self.toast('已重做：' + cmd.label)
+
+    def _update_undo_buttons(self):
+        self.btn_undo.setEnabled(self.undo.can_undo())
+        self.btn_redo.setEnabled(self.undo.can_redo())
+        self.btn_undo.setToolTip(('撤销：' + self.undo.undo_label()) if self.undo.can_undo() else '无可撤销')
+        self.btn_redo.setToolTip(('重做：' + self.undo.redo_label()) if self.undo.can_redo() else '无可重做')
+
+    def on_locate(self, gh, day):
+        self.active = (gh, day)
+        if hasattr(self.workbench, 'grid') and self.workbench.grid is not None:
+            self.workbench.grid.locate(gh, day)
+        if self.data:
+            self.workbench.inspector.show_cell(self.data, gh, day)
+
+    def on_cell_selected(self, gh, day):
+        self.active = (gh, day)
+        if self.data:
+            self.workbench.inspector.show_cell(self.data, gh, day)
+
+    # ---------------- 高级设置抽屉 ----------------
+    def show_drawer(self):
+        self.drawer.set_config(self.config, self.data['employees'] if self.data else [])
+        root = self.centralWidget()
+        w, h = self.drawer.width(), root.height()
+        self.backdrop.setGeometry(0, 0, root.width(), root.height())
+        self.backdrop.show()
+        self.backdrop.raise_()
+        self.drawer.raise_()
+        self.drawer.show()
+        target = QtCore.QRect(root.width() - w, 0, w, h)
+        if theme.MOTION:
+            self._drawer_anim = QtCore.QPropertyAnimation(self.drawer, b'geometry', self)
+            self._drawer_anim.setDuration(240)
+            self._drawer_anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+            self._drawer_anim.setStartValue(QtCore.QRect(root.width(), 0, w, h))
+            self._drawer_anim.setEndValue(target)
+            self._drawer_anim.start()
+        else:
+            self.drawer.setGeometry(target)
+
+    def hide_drawer(self):
+        self.drawer.hide()
+        self.backdrop.hide()
+
+    def apply_config(self, cfg):
+        before = undo.snapshot(self.classify, self.keep, self.config)
+        self.config = cfg
+        self.hide_drawer()
+        self._after_decision('应用高级设置', before)
+
+    # ---------------- 阶段切换 ----------------
+    def goto_step(self, idx):
+        if idx == READY:
+            self.stack.setCurrentIndex(READY)
+        elif idx == REVIEW and self.data is not None:
+            self.stack.setCurrentIndex(REVIEW)
+        elif idx == DONE and self.data is not None:
+            self.goto_done()
+        self._sync_stepper()
+
+    def goto_done(self):
+        if self.data is None:
+            return
+        self.recompute()
+        self.dashboard.refresh(self.data)
+        self.stack.setCurrentIndex(DONE)
+        self._sync_stepper()
+
+    # ---------------- 导出 ----------------
+    def do_export(self):
+        try:
+            rep = engine.build(self.dir, classify=self.classify or None, config=self.config)
+            self.out_path = rep['out']
+            memory.save(self.dir, self.config, self.classify)
+            self.toast('已导出：%s' % os.path.basename(rep['out']))
+            if hasattr(self.dashboard, 'set_exported'):
+                self.dashboard.set_exported(rep['out'])
         except Exception as e:
             self.err(e)
 
-    def apply_keep(self):
-        try:
-            self.keep = set()
-            for i in range(self.cand_tbl.rowCount()):
-                if self.cand_tbl.item(i, 0).checkState() == QtCore.Qt.Checked:
-                    self.keep.add(self.cand_tbl.item(i, 2).text())
-            self._do_prep()
-            self.log('保留名单：%s' % ('、'.join(self.keep) if self.keep else '（无，全部删除）'))
-            self.tabs.setTabEnabled(2, True); self.tabs.setTabEnabled(3, True); self.tabs.setTabEnabled(4, True)
-            self.tabs.setCurrentIndex(2)
-        except Exception as e:
-            self.err(e)
+    def open_result(self):
+        if self.out_path and os.path.exists(self.out_path):
+            _open_file(self.out_path)
 
-    # ---------- ③ classify ----------
-    def _tab_class(self):
-        w = QtWidgets.QWidget(); g = QtWidgets.QVBoxLayout(w)
-        row = QtWidgets.QHBoxLayout()
-        b = QtWidgets.QPushButton('列出待定项'); b.clicked.connect(self.run_worklist)
-        b2 = QtWidgets.QPushButton('全部按建议'); b2.clicked.connect(self.apply_suggestions)
-        row.addWidget(b); row.addWidget(b2); row.addStretch(1)
-        g.addLayout(row)
-        g.addWidget(QtWidgets.QLabel('工作日打卡<2次 —— 逐条定性（默认：0次=未出勤、1次=缺卡；连续空白/外勤单卡常为公出）：'))
-        self.work_tbl = QtWidgets.QTableWidget(0, 6)
-        self.work_tbl.setHorizontalHeaderLabels(['姓名', '日期', '周', '打卡次数', '打卡内容', '归类'])
-        self.work_tbl.horizontalHeader().setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)
-        g.addWidget(self.work_tbl, 1)
-        b3 = QtWidgets.QPushButton('保存归类，进入生成 →'); b3.clicked.connect(self.save_classify)
-        g.addWidget(b3)
-        return w
-
-    def run_worklist(self):
-        try:
-            wl = engine.worklist(self.dir); self.worklist_data = wl
-            cases = wl['cases']
-            self.work_tbl.setRowCount(len(cases))
-            for i, c in enumerate(cases):
-                wd = weekday_cn(wl['year'], wl['month'], c['day'])
-                vals = [c['name'], '%d/%d' % (wl['month'], c['day']), wd, str(c['cnt']),
-                        ('[外勤] ' if c['wq'] else '') + c['punch']]
-                for j, val in enumerate(vals):
-                    it = QtWidgets.QTableWidgetItem(val); it.setFlags(QtCore.Qt.ItemIsEnabled)
-                    self.work_tbl.setItem(i, j, it)
-                combo = QtWidgets.QComboBox(); combo.addItems(['缺卡', '公出', '未出勤'])
-                pre = self.classify.get(c['key'], c['suggest'])
-                combo.setCurrentText(CLS_DISP.get(pre, CLS_DISP[c['suggest']]))
-                combo.setProperty('key', c['key'])
-                self.classify[c['key']] = pre
-                combo.currentTextChanged.connect(lambda text, k=c['key']: self.classify.__setitem__(k, DISP_CLS[text]))
-                self.work_tbl.setCellWidget(i, 5, combo)
-            self.log('%d-%d 待定项 %d 条。' % (wl['year'], wl['month'], len(cases)))
-        except Exception as e:
-            self.err(e)
-
-    def apply_suggestions(self):
-        if not self.worklist_data:
-            self.run_worklist(); return
-        for i, c in enumerate(self.worklist_data['cases']):
-            cb = self.work_tbl.cellWidget(i, 5)
-            if cb:
-                cb.setCurrentText(CLS_DISP[c['suggest']])
-        self.log('已全部置为建议值。')
-
-    def save_classify(self):
-        if not self.worklist_data:
-            self.err('请先「列出待定项」。'); return
-        self.classify = {}
-        for i in range(self.work_tbl.rowCount()):
-            cb = self.work_tbl.cellWidget(i, 5)
-            self.classify[cb.property('key')] = DISP_CLS[cb.currentText()]
-        self.log('归类已保存（%d 条）。' % len(self.classify))
-        self.tabs.setCurrentIndex(4)
-
-    # ---------- ④ config ----------
-    def _tab_config(self):
-        w = QtWidgets.QWidget(); f = QtWidgets.QFormLayout(w)
-        c = self.config
-        self.cfg_excl = QtWidgets.QLineEdit(','.join(sorted(c['excl'])))
-        self.cfg_strict = QtWidgets.QLineEdit(','.join('%s:%02d%02d' % (g, m // 60, m % 60) for g, m in c['strict'].items()))
-        self.cfg_font = QtWidgets.QLineEdit(','.join(sorted(c['font_only'])))
-        f.addRow('不计加班(工号,逗号)：', self.cfg_excl)
-        f.addRow('严格迟到阈值(工号:HHMM)：', self.cfg_strict)
-        f.addRow('迟到只红字(工号,逗号)：', self.cfg_font)
-        b = QtWidgets.QPushButton('应用配置'); b.clicked.connect(self.apply_config)
-        f.addRow(b)
-        f.addRow(QtWidgets.QLabel('（默认即南京六部当前口径，通常无需改动。）'))
-        return w
-
-    def apply_config(self):
-        try:
-            excl = {x.strip() for x in self.cfg_excl.text().split(',') if x.strip()}
-            font = {x.strip() for x in self.cfg_font.text().split(',') if x.strip()}
-            strict = {}
-            for pair in self.cfg_strict.text().split(','):
-                pair = pair.strip()
-                if ':' in pair:
-                    gg, hm = pair.split(':'); strict[gg.strip()] = int(hm[:2]) * 60 + int(hm[2:4])
-            self.config = {'excl': excl, 'strict': strict, 'font_only': font}
-            self.log('配置已应用。')
-        except Exception as e:
-            self.err(e)
-
-    def refresh_config_fields(self):
-        c = self.config
-        self.cfg_excl.setText(','.join(sorted(c['excl'])))
-        self.cfg_strict.setText(','.join('%s:%02d%02d' % (g, m // 60, m % 60) for g, m in c['strict'].items()))
-        self.cfg_font.setText(','.join(sorted(c['font_only'])))
-
+    # ---------------- 决策存载（与 skill 共用 kq_*.txt）----------------
     def save_decisions(self):
         if not self.dir:
-            self.err('请先选目录'); return
+            return
         try:
-            self.apply_config()
             engine.write_keep(self.dir, self.keep)
             engine.write_classify(self.dir, self.classify)
             engine.write_config(self.dir, self.config)
-            self.log('已保存决策：kq_keep.txt / kq_classify.txt / kq_config.txt')
+            memory.save(self.dir, self.config, self.classify)
+            self.toast('已保存决策：kq_keep / kq_classify / kq_config.txt')
         except Exception as e:
             self.err(e)
 
     def load_decisions(self):
         if not self.dir:
-            self.err('请先选目录'); return
-        self.config = engine.read_config(self.dir)
+            return
         self.keep = engine.read_keep(self.dir)
         self.classify = engine.read_classify(self.dir)
-        self.refresh_config_fields()
-        self.log('已从目录载入决策：归类 %d、保留 %d（如需刷新表格请重跑整理/列待定项）' % (len(self.classify), len(self.keep)))
-
-    # ---------- ⑤ build ----------
-    def _tab_build(self):
-        w = QtWidgets.QWidget(); g = QtWidgets.QVBoxLayout(w)
-        b = QtWidgets.QPushButton('生成《考勤》'); b.clicked.connect(self.run_build)
-        g.addWidget(b)
-        self.sum_lbl = QtWidgets.QLabel('—'); g.addWidget(self.sum_lbl)
-        split = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        sw = QtWidgets.QWidget(); sl = QtWidgets.QVBoxLayout(sw); sl.setContentsMargins(0, 0, 0, 0)
-        self.sum_tbl = QtWidgets.QTableWidget(0, 4)
-        self.sum_tbl.setHorizontalHeaderLabels(['工号', '姓名', '加班(h)', '全勤'])
-        sl.addWidget(QtWidgets.QLabel('汇总：')); sl.addWidget(self.sum_tbl)
-        pw = QtWidgets.QWidget(); pl = QtWidgets.QVBoxLayout(pw); pl.setContentsMargins(0, 0, 0, 0)
-        self.preview = QtWidgets.QTableWidget(0, 0)
-        self.preview.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.preview.cellDoubleClicked.connect(self.on_preview_dblclick)
-        pl.addWidget(QtWidgets.QLabel('彩色预览（颜色即最终着色；偶数行=加班时长）。双击 绿/蓝/红 的"缺卡格"可改判，即时重算：'))
-        pl.addWidget(self.preview)
-        split.addWidget(sw); split.addWidget(pw); split.setSizes([150, 450])
-        g.addWidget(split, 1)
-        row2 = QtWidgets.QHBoxLayout()
-        brecalc = QtWidgets.QPushButton('重算（应用当前归类/配置）'); brecalc.clicked.connect(self.run_build)
-        self.btn_open = QtWidgets.QPushButton('打开考勤表（Excel/WPS）'); self.btn_open.clicked.connect(self.open_result)
-        self.btn_open.setEnabled(False)
-        row2.addWidget(brecalc); row2.addWidget(self.btn_open)
-        g.addLayout(row2)
-        return w
-
-    def _set_work_combo(self, key, disp):
-        for i in range(self.work_tbl.rowCount()):
-            cb = self.work_tbl.cellWidget(i, 5)
-            if cb and cb.property('key') == key:
-                cb.blockSignals(True); cb.setCurrentText(disp); cb.blockSignals(False)
-                return
-
-    def on_preview_dblclick(self, qr, qc):
-        meta = self.cell_to_key.get((qr + 1, qc + 1))
-        if not meta:
-            return
-        items = ['缺卡', '公出', '未出勤']
-        cur = CLS_DISP.get(self.classify.get(meta['key'], ''), '')
-        idx = items.index(cur) if cur in items else 0
-        choice, ok = QtWidgets.QInputDialog.getItem(
-            self, '改判', '%s  %d日  当前=%s\n选择新定性：' % (meta['name'], meta['day'], cur or '默认'),
-            items, idx, False)
-        if ok and choice:
-            self.classify[meta['key']] = DISP_CLS[choice]
-            self._set_work_combo(meta['key'], choice)
-            self.log('改判 %s(%s) %d日 → %s，重算中…' % (meta['name'], meta['gh'], meta['day'], choice))
-            self.run_build()
-
-    def render_preview(self, path):
-        ws = openpyxl.load_workbook(path).active
-        maxr, maxc = ws.max_row, 37
-        t = self.preview
-        t.setRowCount(maxr); t.setColumnCount(maxc)
-        t.setHorizontalHeaderLabels([col_letter(c) for c in range(1, maxc + 1)])
-        t.setVerticalHeaderLabels([str(r) for r in range(1, maxr + 1)])
-        for r in range(1, maxr + 1):
-            for c in range(1, maxc + 1):
-                cell = ws.cell(r, c)
-                it = QtWidgets.QTableWidgetItem('' if cell.value is None else str(cell.value))
-                try:
-                    if cell.fill is not None and cell.fill.patternType == 'solid':
-                        rgb = cell.fill.fgColor.rgb
-                        if isinstance(rgb, str) and len(rgb) == 8 and rgb[2:].upper() not in ('FFFFFF', '000000'):
-                            it.setBackground(QtGui.QColor(int(rgb[2:4], 16), int(rgb[4:6], 16), int(rgb[6:8], 16)))
-                except Exception:
-                    pass
-                try:
-                    fc = cell.font.color
-                    if fc is not None and getattr(fc, 'rgb', None) == 'FFFF0000':
-                        it.setForeground(QtGui.QColor(255, 0, 0))
-                except Exception:
-                    pass
-                if (r, c) in self.cell_to_key:
-                    it.setToolTip('双击改判：缺卡/公出/未出勤')
-                t.setItem(r - 1, c - 1, it)
-        t.resizeColumnsToContents()
-        t.resizeRowsToContents()
-
-    def run_build(self):
+        self.config = engine.read_config(self.dir)
         try:
-            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-            rpt = engine.build(self.dir, classify=self.classify or None, config=self.config)
-            QtWidgets.QApplication.restoreOverrideCursor()
-            self.out_path = rpt['out']
-            self.sum_lbl.setText('%d-%d  共 %d 人，加班合计 %g h，全勤 %d 人。  →  %s' % (
-                rpt['year'], rpt['month'], len(rpt['summary']), rpt['total_ot'],
-                rpt['quan_count'], os.path.basename(rpt['out'])))
-            self.sum_tbl.setRowCount(len(rpt['summary']))
-            for i, x in enumerate(rpt['summary']):
-                vals = [x['gh'], x['name'], ('—' if x['excl'] else '%g' % x['ot']), '✓' if x['quan'] else '']
-                for j, val in enumerate(vals):
-                    self.sum_tbl.setItem(i, j, QtWidgets.QTableWidgetItem(val))
-            self.cell_to_key = {(c['row'], c['col']): c for c in rpt.get('cells', [])}
-            self.render_preview(rpt['out'])
-            self.btn_open.setEnabled(True)
-            self.log('已生成：%s' % rpt['out'])
-        except Exception as e:
-            QtWidgets.QApplication.restoreOverrideCursor()
-            self.err(e)
+            engine.prep(self.dir, self.keep)
+        except Exception:
+            pass
+        self.recompute()
+        self.dashboard.refresh(self.data)
+        self.toast('已载入决策并重算')
 
-    def open_result(self):
-        if getattr(self, 'out_path', None) and os.path.exists(self.out_path):
-            os.startfile(self.out_path)
+    # ---------------- 键盘流 ----------------
+    def _focus_search(self):
+        if self.stack.currentIndex() == REVIEW:
+            self.workbench.grid.header.search.setFocus()
+            self.workbench.grid.header.search.selectAll()
+
+    def _on_escape(self):
+        if self.drawer.isVisible():
+            self.hide_drawer()
+            return
+        h = self.workbench.grid.header.search
+        if h.text():
+            h.clear()
+
+    def _todo_items(self):
+        if not self.data:
+            return []
+        items = [('leaver', c) for c in self.leaver_cands]
+        items += [('case', c) for c in self.data['pending'] if c['key'] not in self.classify]
+        return items
+
+    def _goto_kbd(self, items):
+        if not items:
+            self.kbd_idx = -1
+            self.workbench.todo.set_current(None)
+            return
+        self.kbd_idx = max(0, min(self.kbd_idx, len(items) - 1))
+        kind, c = items[self.kbd_idx]
+        if kind == 'case':
+            self.on_locate(c['gh'], c['day'])
+            self.workbench.todo.set_current('case:%s' % c['key'])
+        else:
+            day = c.get('pd') and None
+            self.workbench.todo.set_current('leaver:%s' % c['gh'])
+
+    def keyPressEvent(self, e):
+        if self.stack.currentIndex() != REVIEW:
+            return super().keyPressEvent(e)
+        if self.workbench.grid.header.search.hasFocus():
+            return super().keyPressEvent(e)
+        items = self._todo_items()
+        k = e.key()
+        cur = items[self.kbd_idx] if 0 <= self.kbd_idx < len(items) else (None, None)
+        # 离职取舍 K/J
+        if cur[0] == 'leaver' and k in (Qt.Key_K, Qt.Key_J):
+            self.do_keep(cur[1]['gh'], k == Qt.Key_K)
+            return self._goto_kbd(self._todo_items())
+        # 归类 1/2/3/Enter
+        if cur[0] == 'case' and k in (Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_Return, Qt.Key_Enter):
+            val = {Qt.Key_1: 'G', Qt.Key_2: 'B', Qt.Key_3: 'R'}.get(k, cur[1]['suggest'])
+            self.do_reclassify(cur[1]['gh'], cur[1]['day'], val)
+            return self._goto_kbd(self._todo_items())
+        # 上下移动
+        if k == Qt.Key_Down and items:
+            self.kbd_idx = min(self.kbd_idx + 1, len(items) - 1) if self.kbd_idx >= 0 else 0
+            return self._goto_kbd(items)
+        if k == Qt.Key_Up and items:
+            self.kbd_idx = max(self.kbd_idx - 1, 0)
+            return self._goto_kbd(items)
+        super().keyPressEvent(e)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.toast_w._reposition()
 
 
 def _run_smoke(d):
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-    QtWidgets.QApplication([])
-    w = MainWindow(); w.headless = True
-    if not w.set_dir(d):
-        print('SMOKE FAIL: 目录无效'); return 1
-    w.confirm_dir(); w.run_prep(); w.apply_keep(); w.run_worklist(); w.save_classify(); w.run_build()
-    ok = (w.preview.rowCount() == 54) and (len(w.cell_to_key) > 0) and os.path.exists(getattr(w, 'out_path', ''))
-    print('SMOKE %s: preview=%d cells=%d out=%s' % (
-        'OK' if ok else 'FAIL', w.preview.rowCount(), len(w.cell_to_key), getattr(w, 'out_path', '')))
+    theme.MOTION = False
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app.setStyleSheet(theme.build_qss())
+    w = MainWindow()
+    w.headless = True
+    w.choose_dir(d)
+    if not w.ready.btn_start.isEnabled():
+        print('SMOKE FAIL: 就绪页未通过校验')
+        return 1
+    w.begin_review()
+    ok_review = w.data is not None and len(w.data['employees']) > 0
+    w.goto_done()
+    ok = ok_review and w.stack.currentIndex() == DONE
+    print('SMOKE %s: people=%d month=%s pending=%d full=%s' % (
+        'OK' if ok else 'FAIL', len(w.data['employees']) if w.data else 0,
+        w.data['month'] if w.data else '?', w.data['stats']['pending'] if w.data else -1,
+        w.data['stats']['full_list'] if w.data else []))
     return 0 if ok else 1
 
 
@@ -420,8 +522,12 @@ def main():
         i = sys.argv.index('--smoke')
         d = sys.argv[i + 1] if i + 1 < len(sys.argv) else os.getcwd()
         sys.exit(_run_smoke(d))
+    if os.environ.get('KQ_NO_MOTION'):
+        theme.MOTION = False        # 尊重「减少动态效果」偏好
     app = QtWidgets.QApplication(sys.argv)
-    w = MainWindow(); w.show()
+    app.setStyleSheet(theme.build_qss())
+    w = MainWindow()
+    w.show()
     sys.exit(app.exec())
 
 
