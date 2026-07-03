@@ -14,10 +14,10 @@ def check(name, cond):
     global PASS, FAIL
     if cond:
         PASS += 1
-        print('  ✓ %s' % name)
+        print('  PASS %s' % name)
     else:
         FAIL += 1
-        print('  ✗ %s' % name)
+        print('  FAIL %s' % name)
 
 
 def test_ru30_rd30():
