@@ -9,7 +9,7 @@ from model import AttendanceModel, WEEK_CN
 from delegate import AttendanceDelegate, _qc
 from engine import ANOMALY_STATUS
 
-CLS_DISP = {'G': '缺卡', 'B': '公出', 'R': '未出勤'}
+CLS_DISP = theme.CLS_CODE
 DISP_CLS = {v: k for k, v in CLS_DISP.items()}
 
 

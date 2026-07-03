@@ -1,17 +1,45 @@
-name: Build Windows EXE
+name: Build & Test
 
-# 推送 v* 标签自动打包并发 Release；也支持在 Actions 页面手动触发（仅出 artifact）。
 on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: write          # 创建 Release 需要写权限
 
 jobs:
-  build:
+  # macOS 冒烟测试（不打包，只验证 GUI 启动和引擎计算）
+  smoke-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Engine unit tests
+        working-directory: app
+        run: python test_engine.py
+
+      - name: Smoke test (synthetic data)
+        working-directory: app
+        run: |
+          python _make_sample.py /tmp/kq_sample
+          KQ_DIR=/tmp/kq_sample python _smoke_gui.py
+
+  # Windows 打包（仅 tag 推送时触发）
+  build-windows:
+    needs: smoke-macos
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -19,12 +47,24 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Install dependencies
-        run: pip install PySide6 openpyxl pyinstaller
+        run: pip install -r requirements.txt
+
+      - name: Engine unit tests
+        working-directory: app
+        run: python test_engine.py
+
+      - name: Smoke test (synthetic data)
+        working-directory: app
+        shell: bash
+        run: |
+          python _make_sample.py "${RUNNER_TEMP}/kq_sample"
+          KQ_DIR="${RUNNER_TEMP}/kq_sample" python _smoke_gui.py
 
       - name: Build exe (PyInstaller)
-        working-directory: app          # 与 build_exe.bat 一致：在 app/ 下打包，engine.py 同目录被自动收集
+        working-directory: app
         run: pyinstaller --noconfirm --windowed --onefile --name nanjing_kaoqin gui.py
 
       - name: Upload artifact
@@ -33,8 +73,15 @@ jobs:
           name: nanjing_kaoqin-windows
           path: app/dist/nanjing_kaoqin.exe
 
+      - name: Generate checksum
+        shell: bash
+        run: sha256sum app/dist/nanjing_kaoqin.exe > app/dist/SHA256.txt
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: app/dist/nanjing_kaoqin.exe
+          files: |
+            app/dist/nanjing_kaoqin.exe
+            app/dist/SHA256.txt
+          generate_release_notes: true

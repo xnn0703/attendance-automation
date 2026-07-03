@@ -52,6 +52,9 @@ LABELS = {
     'miss': '缺卡', 'biz': '公出', 'field': '外勤日', 'full': '全勤',
     'pending': '待归类', 'rest': '休息', 'normal': '正常',
 }
+# 归类码映射（统一定义，gui/panels/grid 共用）
+CLS_CODE = {'G': '缺卡', 'B': '公出', 'R': '未出勤'}
+CLS_KIND = {'G': 'miss', 'B': 'biz', 'R': 'absent'}
 # 图例固定顺序
 LEGEND_ORDER = ['late', 'lateheavy', 'early', 'absent', 'miss', 'biz', 'field', 'full', 'pending']
 

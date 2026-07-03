@@ -18,10 +18,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | **金标准回归测试** | `python app/test_golden.py` → 末行 `ZERO-REGRESSION` / `REGRESSION FOUND`（需真实数据 + PS 金标准） |
 | 无头冒烟（端到端走查 GUI） | `KQ_DIR=<DIR> python app/_smoke_gui.py` 或 `python app/gui.py --smoke <DIR>`（offscreen，末行 `SMOKE OK`） |
 | 打包 exe | `app/build_exe.bat`(Win) 或 GitHub Actions（推 `v*` tag）→ `nanjing_kaoqin.exe` |
-| Skill（PowerShell 实现） | `& .claude/skills/nanjing-kaoqin/scripts/kq_run.ps1 -Stage prep\|worklist\|build -Dir <DIR>` |
+| Skill（PowerShell 实现） | `& .agents/skills/nanjing-kaoqin/scripts/kq_run.ps1 -Stage prep\|worklist\|build -Dir <DIR>` |
 
 - **无 pytest**：`test_golden.py` / `_smoke_gui.py` 都是直接 `python` 跑的独立脚本，没有测试框架；"跑单个测试"=跑对应脚本。`KQ_NO_MOTION=1` 可关 GUI 动效（reduced-motion）。
-- ⚠️ **测试默认目录** 现由 `KQ_DIR`/`default_data_dir()` 决定（不再硬编码）。`test_golden` 仍依赖真实三表 + **PS 版《考勤》作金标准**（逐格比对值/底色/红字）；`_smoke_gui` 只需三表即可（合成数据亦可，先跑 `_make_sample.py`）。隐私数据按 `.gitignore` 不入库。
+- ⚠️ **测试默认目录** 现由 `KQ_DIR`/`default_data_dir()` 决定（不再硬编码）。`test_golden` 仍依赖真实三表 + **PS 版《考勤》作金标准**（逐格比对值/底色/红字）；`_smoke_gui` 若默认目录无三表会自动生成临时合成数据并清理。隐私数据按 `.gitignore` 不入库。
 - ⚠️ Skill 调用务必用 PowerShell `&` 调用算子，**不要** `powershell.exe -File`（中文路径会被截断）。
 - **发版**：GitHub 镜像仓库 `xnn0703/attendance-automation`，`.github/workflows/build-windows.yml` 在 windows-latest 上 PyInstaller 打包，推 `v*` tag 自动发 Release。
 
@@ -214,7 +214,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 实现：Skill `nanjing-kaoqin`
 
-**已封装为 Skill** `nanjing-kaoqin`（`.claude/skills/nanjing-kaoqin/`）：单脚本
+**已封装为 Skill** `nanjing-kaoqin`（`.agents/skills/nanjing-kaoqin/`）：单脚本
 `scripts/kq_run.ps1 -Stage prep|worklist|build -Dir <数据目录>`，**日历从《调班表》网格 + 个人调班(O/P 列)解析、
 配置文件驱动、月份/天数/人数动态、换月通用**。规则见 `references/rules.md`，编排见 `SKILL.md`。
 已用 2026-05 自测**零回归**（与早期月份特定脚本产出归一化后逐字节一致，`styles.xml` 哈希相同）。

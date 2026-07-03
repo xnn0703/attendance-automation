@@ -13,7 +13,7 @@ import memory
 from widgets import Stepper, Toast, Chip2
 from panels import ReadyView, Workbench, Dashboard, AdvancedDrawer
 
-VAL_CN = {'R': '未出勤', 'G': '缺卡', 'B': '公出'}
+VAL_CN = theme.CLS_CODE
 
 READY, REVIEW, DONE = 0, 1, 2
 
@@ -300,8 +300,9 @@ class MainWindow(QtWidgets.QMainWindow):
                        'font_only': set(state['config']['font_only'])}
         try:
             engine.prep(self.dir, self.keep)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.warning('prep failed during undo/redo: %s', e)
         self.recompute()
         if self.stack.currentIndex() == DONE:
             self.dashboard.refresh(self.data)

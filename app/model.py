@@ -27,12 +27,14 @@ class AttendanceModel(QtCore.QAbstractTableModel):
         self.endResetModel()
 
     def set_active(self, gh, day):
+        old = self.active
         self.active = (gh, day) if gh else None
-        # 触发整表重绘选中态（轻量）
-        if self.emps:
-            self.dataChanged.emit(self.index(0, 0),
-                                  self.index(self.rowCount() - 1, self.columnCount() - 1),
-                                  [Qt.DisplayRole])
+        # 只刷新旧选中 + 新选中两个单元格，避免整表重绘
+        for pos in (old, self.active):
+            if pos:
+                idx = self.index_for(pos[0], pos[1])
+                if idx.isValid():
+                    self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
     # ---- 维度 ----
     def rowCount(self, parent=QModelIndex()):

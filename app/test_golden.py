@@ -84,6 +84,11 @@ def main():
                 print('DIFF r%d c%d | golden v=%r fill=%s fred=%s | new v=%r fill=%s fred=%s'
                       % (r, col, gv, gi[1], gi[2], nv, ni[1], ni[2]))
     print('\nRESULT: value_diffs(non-ws)=%d  whitespace_only=%d  fill_diffs=%d  font_diffs=%d' % (val_d, ws_d, fill_d, font_d))
-    print('ZERO-REGRESSION' if (val_d == 0 and fill_d == 0 and font_d == 0) else 'REGRESSION FOUND')
+    if val_d == 0 and fill_d == 0 and font_d == 0:
+        print('ZERO-REGRESSION')
+        sys.exit(0)
+    else:
+        print('REGRESSION FOUND')
+        sys.exit(1)
 
 main()

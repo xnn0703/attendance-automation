@@ -9,9 +9,9 @@ import engine
 from widgets import make_card, h2, muted, Banner, ProgressRing, Swatch
 
 WEEK_CN = '一二三四五六日'
-CLS_DISP = {'G': '缺卡', 'B': '公出', 'R': '未出勤'}
+CLS_DISP = theme.CLS_CODE
 DISP_CLS = {v: k for k, v in CLS_DISP.items()}
-CLS_KIND = {'G': 'miss', 'B': 'biz', 'R': 'absent'}   # 归类码 → 语义色 kind
+CLS_KIND = theme.CLS_KIND
 
 
 def _lab(text, size=12, weight=400, color=theme.INK, mono=False):
@@ -442,7 +442,7 @@ class TodoPanel(QtWidgets.QWidget):
 
     def _seg_qss(self, on):
         if on:
-            return ('QPushButton{flex:1;background:%s;color:#fff;border:none;border-radius:8px;padding:7px 0;'
+            return ('QPushButton{background:%s;color:#fff;border:none;border-radius:8px;padding:7px 0;'
                     'font-size:12.5px;font-weight:600;}' % theme.ACCENT)
         return ('QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:8px;padding:7px 0;'
                 'font-size:12.5px;font-weight:600;}QPushButton:hover{background:%s;}'
