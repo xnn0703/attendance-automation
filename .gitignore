@@ -25,3 +25,4 @@ kq_config.txt
 app/build/
 app/dist/
 app/*.spec
+!app/mingxu.spec

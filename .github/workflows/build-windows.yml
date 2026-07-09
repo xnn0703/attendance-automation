@@ -76,7 +76,25 @@ jobs:
 
       - name: Build exe (PyInstaller)
         working-directory: app
-        run: pyinstaller --noconfirm --windowed --onefile --name mingxu --collect-all rapidocr --collect-all onnxruntime gui.py
+        run: pyinstaller --noconfirm mingxu.spec
+
+      - name: Smoke test packaged exe
+        working-directory: app
+        shell: bash
+        run: |
+          python _make_sample.py "${RUNNER_TEMP}/kq_exe_sample"
+          python - <<'PY'
+          import os
+          import subprocess
+          import sys
+
+          sample = os.path.join(os.environ["RUNNER_TEMP"], "kq_exe_sample")
+          env = os.environ.copy()
+          env["QT_QPA_PLATFORM"] = "offscreen"
+          env["KQ_NO_MOTION"] = "1"
+          result = subprocess.run(["dist/mingxu.exe", "--smoke", sample], env=env, timeout=120)
+          sys.exit(result.returncode)
+          PY
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
