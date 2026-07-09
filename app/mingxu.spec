@@ -5,7 +5,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(SPECPATH).resolve()
 
 hiddenimports = [
     "delegate",
