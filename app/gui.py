@@ -12,6 +12,7 @@ import undo
 import memory
 from widgets import Stepper, Toast, Chip2
 from panels import ReadyView, Workbench, Dashboard, AdvancedDrawer
+from reimburse_panels import ReimburseView
 
 VAL_CN = theme.CLS_CODE
 
@@ -31,9 +32,10 @@ def _open_file(path):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('南京六部考勤 · 工作台')
+        self.setWindowTitle('明序 · 工作台')
         self.resize(1280, 800)
         self.headless = False
+        self.mode = 'attendance'
         # ---- 状态 ----
         self.dir = None
         self.data = None
@@ -64,6 +66,15 @@ class MainWindow(QtWidgets.QMainWindow):
         tb = QtWidgets.QHBoxLayout(toolbar)
         tb.setContentsMargins(8, 0, 14, 0)
         tb.setSpacing(10)
+        self.btn_mode_att = QtWidgets.QPushButton('考勤自动化')
+        self.btn_mode_reim = QtWidgets.QPushButton('报销汇总')
+        for b in (self.btn_mode_att, self.btn_mode_reim):
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedHeight(30)
+        self.btn_mode_att.clicked.connect(lambda: self.set_mode('attendance'))
+        self.btn_mode_reim.clicked.connect(lambda: self.set_mode('reimburse'))
+        tb.addWidget(self.btn_mode_att)
+        tb.addWidget(self.btn_mode_reim)
         self.stepper = Stepper()
         self.stepper.stepClicked.connect(self.goto_step)
         tb.addWidget(self.stepper)
@@ -104,7 +115,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stack.addWidget(self.ready)
         self.stack.addWidget(self.workbench)
         self.stack.addWidget(self.dashboard)
-        v.addWidget(self.stack, 1)
+        self.reimburse = ReimburseView()
+        self.main_stack = QtWidgets.QStackedWidget()
+        self.main_stack.addWidget(self.stack)
+        self.main_stack.addWidget(self.reimburse)
+        v.addWidget(self.main_stack, 1)
 
         # ---- Toast ----
         self.toast_w = Toast(root)
@@ -122,6 +137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---- 信号 ----
         self.ready.dirChosen.connect(self.choose_dir)
         self.ready.startReview.connect(self.begin_review)
+        self.ready.clearRequested.connect(self.clear_current_data)
         self.workbench.todo.locate.connect(self.on_locate)
         self.workbench.todo.reclassify.connect(self.do_reclassify)
         self.workbench.todo.keepDecide.connect(self.do_keep)
@@ -151,6 +167,24 @@ class MainWindow(QtWidgets.QMainWindow):
         sc.activated.connect(slot)
         return sc
 
+    def _mode_qss(self, active):
+        if active:
+            return ('QPushButton{background:%s;color:#fff;border:none;border-radius:8px;'
+                    'padding:6px 12px;font-size:12.5px;font-weight:700;}'
+                    'QPushButton:hover{background:%s;}' % (theme.ACCENT, theme.ACCENT_STRONG))
+        return ('QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:8px;'
+                'padding:6px 12px;font-size:12.5px;font-weight:600;}'
+                'QPushButton:hover{background:%s;}' % (theme.SURFACE, theme.INK_2, theme.LINE, theme.SURFACE_3))
+
+    def _sync_mode_buttons(self):
+        self.btn_mode_att.setStyleSheet(self._mode_qss(self.mode == 'attendance'))
+        self.btn_mode_reim.setStyleSheet(self._mode_qss(self.mode == 'reimburse'))
+
+    def set_mode(self, mode):
+        self.mode = mode
+        self.main_stack.setCurrentIndex(1 if mode == 'reimburse' else 0)
+        self._sync_stepper()
+
     # ---------------- 工具 ----------------
     def toast(self, msg):
         self.toast_w.show_msg(msg)
@@ -162,6 +196,21 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, '错误', str(e))
 
     def _sync_stepper(self):
+        self._sync_mode_buttons()
+        if self.mode == 'reimburse':
+            self.main_stack.setCurrentIndex(1)
+            self.stepper.hide()
+            self.ready_hint.setText('离线发票解析 · 图片凭证人工复核')
+            self.ready_hint.show()
+            for c in (self.chip_dir, self.chip_meta, self.chip_todo):
+                c.hide()
+            self.btn_done.hide()
+            self.btn_undo.hide()
+            self.btn_redo.hide()
+            return
+        self.main_stack.setCurrentIndex(0)
+        self.stepper.show()
+        self.ready_hint.setText('选择文件夹后自动就绪')
         cur = self.stack.currentIndex()
         mx = DONE if self.data is not None else (READY if self.dir is None else REVIEW)
         self.stepper.set_state(cur, mx)
@@ -175,6 +224,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_done.setEnabled(self.data is not None and cur == REVIEW)
 
     # ---------------- 阶段① 就绪 ----------------
+    def clear_current_data(self):
+        self.hide_drawer()
+        self.dir = None
+        self.data = None
+        self.keep = set()
+        self.classify = {}
+        self.config = engine.default_config()
+        self.leaver_cands = []
+        self.active = None
+        self.search = ''
+        self.filter = 'all'
+        self.out_path = None
+        self.undo = undo.UndoStack()
+        self.kbd_idx = -1
+        self.memory = None
+        self.ready.reset()
+        self.stack.setCurrentIndex(READY)
+        self.chip_dir.setText('')
+        self.chip_meta.setText('')
+        self.chip_todo.setText('')
+        self.btn_undo.setEnabled(False)
+        self.btn_redo.setEnabled(False)
+        self.workbench.todo.set_current(None)
+        self._sync_stepper()
+        self.toast('已清除当前数据')
+
     def choose_dir(self, d):
         self.dir = d
         self.chip_dir.setText(os.path.basename(d.rstrip('/')) or d)
@@ -371,6 +446,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---------------- 阶段切换 ----------------
     def goto_step(self, idx):
+        if self.mode != 'attendance':
+            return
         if idx == READY:
             self.stack.setCurrentIndex(READY)
         elif idx == REVIEW and self.data is not None:
@@ -432,11 +509,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---------------- 键盘流 ----------------
     def _focus_search(self):
-        if self.stack.currentIndex() == REVIEW:
+        if self.mode == 'attendance' and self.stack.currentIndex() == REVIEW:
             self.workbench.grid.header.search.setFocus()
             self.workbench.grid.header.search.selectAll()
 
     def _on_escape(self):
+        if self.mode != 'attendance':
+            return
         if self.drawer.isVisible():
             self.hide_drawer()
             return
@@ -466,6 +545,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.workbench.todo.set_current('leaver:%s' % c['gh'])
 
     def keyPressEvent(self, e):
+        if self.mode != 'attendance':
+            return super().keyPressEvent(e)
         if self.stack.currentIndex() != REVIEW:
             return super().keyPressEvent(e)
         if self.workbench.grid.header.search.hasFocus():

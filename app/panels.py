@@ -35,6 +35,7 @@ def _section_head(title, count, total):
 class ReadyView(QtWidgets.QWidget):
     dirChosen = QtCore.Signal(str)
     startReview = QtCore.Signal()
+    clearRequested = QtCore.Signal()
     REC_ROWS = [('原表（钉钉打卡）', 'yuan'), ('员工花名册', 'ros'), ('调班表', 'tiao')]
 
     def __init__(self, parent=None):
@@ -170,6 +171,12 @@ class ReadyView(QtWidgets.QWidget):
         self.foot_lb = _lab('', 12, 400, theme.INK_3)
         fh.addWidget(self.foot_lb)
         fh.addStretch(1)
+        self.btn_clear = QtWidgets.QPushButton('清除数据')
+        self.btn_clear.setProperty('ghost', '1')
+        self.btn_clear.setCursor(Qt.PointingHandCursor)
+        self.btn_clear.setToolTip('清空当前选择和识别状态，不删除文件夹内的 Excel 或配置文件')
+        self.btn_clear.clicked.connect(self.clearRequested.emit)
+        fh.addWidget(self.btn_clear)
         self.btn_start = QtWidgets.QPushButton('开始复核  →')
         self.btn_start.setProperty('primary', '1')
         self.btn_start.setCursor(Qt.PointingHandCursor)
@@ -181,6 +188,7 @@ class ReadyView(QtWidgets.QWidget):
         hl.addWidget(self.card)
         scroll.setWidget(host)
         outer.addWidget(scroll)
+        self.reset()
 
     def _todo_big(self, label, sub, icon_char=''):
         card = make_card()
@@ -240,6 +248,7 @@ class ReadyView(QtWidgets.QWidget):
     def set_recognition(self, inp):
         import os
         self.drop.hide()          # 已选目录 → 隐藏拖入虚线区（设计稿 ReadyCard 态无 DropZone）
+        self.btn_clear.setEnabled(True)
         for key, (val, stat) in self._file_rows.items():
             path = inp.get(key)
             if path:
@@ -269,6 +278,26 @@ class ReadyView(QtWidgets.QWidget):
 
     def set_dir_text(self, d):
         self.dir_lb.setText(d)
+
+    def reset(self):
+        self.drop.show()
+        self._drop_normal()
+        self.month_box.setText('—')
+        self.title_lb.setText('准备数据')
+        self.dir_lb.setText('请选择含三张输入表的文件夹')
+        self.people_lb.setText('—')
+        self.banner.set_msg('info', '')
+        for val, stat in self._file_rows.values():
+            val.setText('— 未选择 —')
+            val.setStyleSheet('color:%s;font-size:11px;background:transparent;' % theme.INK_3)
+            stat.setText('')
+            stat.setStyleSheet('color:%s;font-size:11px;font-weight:700;background:transparent;' % theme.INK_3)
+        self.todo_wrap.setVisible(False)
+        self.todo_leaver[1].setText('0')
+        self.todo_pending[1].setText('0')
+        self.foot_lb.setText('')
+        self.btn_start.setEnabled(False)
+        self.btn_clear.setEnabled(False)
 
     def _set_banner(self, kind, title, body):
         self.banner.set_msg(kind, ('%s\n%s' % (title, body)) if body else title)

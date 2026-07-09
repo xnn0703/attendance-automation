@@ -1,7 +1,7 @@
 # 南京六部考勤 GUI 上位机 — 设计文档（v0.1）
 
 > **状态（2026-06-03）：Phase 1 MVP + Phase 2（彩色预览 / 双击改判即时重算 / 决策存取 / 输入校验）+ Phase 3
-> （PyInstaller 打包 `app/dist/nanjing_kaoqin.exe`）均已实现（方案 A，对 2026-05 逐格零回归）。**
+> （PyInstaller 打包 `app/dist/mingxu.exe`）均已实现（方案 A，对 2026-05 逐格零回归）。**
 > 下文为设计依据；已实现见 `app/engine.py`、`app/gui.py`、`app/build_exe.bat`。
 
 > 目的：把已固化、已验证的考勤工作流（skill `nanjing-kaoqin`）做成一个**桌面上位机**：可视化驱动，

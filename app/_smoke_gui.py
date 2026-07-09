@@ -24,6 +24,7 @@ def make_temp_src():
 def main():
     src = SRC
     cleanup = False
+    reim_tmp = None
     inp = engine.find_inputs(src)
     if not (inp['ros'] and inp['tiao'] and (inp['yuan'] or inp['chu'])):
         src = make_temp_src()
@@ -38,6 +39,12 @@ def main():
         # 阶段① 就绪
         w.choose_dir(src)
         assert w.ready.btn_start.isEnabled(), '就绪页未通过校验'
+        w.clear_current_data()
+        assert w.dir is None and w.data is None, '清除数据未清空主状态'
+        assert not w.ready.btn_start.isEnabled(), '清除数据后开始按钮仍可用'
+        assert not w.ready.drop.isHidden(), '清除数据后未恢复选择/拖入区'
+        w.choose_dir(src)
+        assert w.ready.btn_start.isEnabled(), '清除后重新选择未通过校验'
 
         # 阶段② 复核
         w.begin_review()
@@ -90,6 +97,23 @@ def main():
         assert all(os.path.exists(os.path.join(src, f)) for f in
                    ('kq_keep.txt', 'kq_classify.txt', 'kq_config.txt', 'kq_memory.json')), '决策/记忆未写盘'
 
+        # 报销汇总入口：最小无头流程
+        reim_tmp = tempfile.mkdtemp(prefix='reim_smoke_')
+        trip_dir = os.path.join(reim_tmp, '6.21外访')
+        os.makedirs(trip_dir, exist_ok=True)
+        for name in ('6.21出发.jpg', '6.21结束.jpg'):
+            with open(os.path.join(trip_dir, name), 'wb') as f:
+                f.write(b'')
+        w.set_mode('reimburse')
+        assert w.main_stack.currentIndex() == 1, '未切换到报销汇总'
+        w.reimburse.scan_dir(reim_tmp)
+        assert w.reimburse.trip_table.rowCount() == 1, '报销行程未识别'
+        w.reimburse.trip_table.item(0, 2).setText('131066')
+        w.reimburse.trip_table.item(0, 3).setText('131188')
+        w.reimburse.trip_table.item(0, 5).setText('中国江苏省南京市浦口区天华北路1号')
+        w.reimburse.export_outputs()
+        assert all(os.path.exists(p) for p in w.reimburse.last_outputs.values()), '报销汇总导出文件不存在'
+
         print('SMOKE OK: people=%d pending(after adopt)=%d out=%s memory=%s' % (
             n_people, w.data['stats']['pending'], os.path.basename(w.out_path),
             memory_summary(src)))
@@ -97,6 +121,8 @@ def main():
     finally:
         if cleanup:
             shutil.rmtree(src, ignore_errors=True)
+        if reim_tmp:
+            shutil.rmtree(reim_tmp, ignore_errors=True)
 
 
 def memory_summary(src):

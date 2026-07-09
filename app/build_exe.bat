@@ -4,7 +4,7 @@ cd /d "%~dp0"
 echo === install PyInstaller (skip if present) ===
 python -m pip install -q pyinstaller
 echo === building (PySide6 is large, please wait 1-3 min) ===
-pyinstaller --noconfirm --windowed --onefile --name nanjing_kaoqin gui.py
+pyinstaller --noconfirm --windowed --onefile --name mingxu gui.py
 echo.
-echo === done: dist\nanjing_kaoqin.exe ===
+echo === done: dist\mingxu.exe ===
 pause

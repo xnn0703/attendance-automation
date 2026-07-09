@@ -33,6 +33,10 @@ jobs:
         working-directory: app
         run: python test_engine.py
 
+      - name: Reimburse unit tests
+        working-directory: app
+        run: python test_reimburse.py
+
       - name: Smoke test (synthetic data)
         working-directory: app
         run: |
@@ -59,6 +63,10 @@ jobs:
         working-directory: app
         run: python test_engine.py
 
+      - name: Reimburse unit tests
+        working-directory: app
+        run: python test_reimburse.py
+
       - name: Smoke test (synthetic data)
         working-directory: app
         shell: bash
@@ -68,23 +76,23 @@ jobs:
 
       - name: Build exe (PyInstaller)
         working-directory: app
-        run: pyinstaller --noconfirm --windowed --onefile --name nanjing_kaoqin gui.py
+        run: pyinstaller --noconfirm --windowed --onefile --name mingxu --collect-all rapidocr --collect-all onnxruntime gui.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: nanjing_kaoqin-windows
-          path: app/dist/nanjing_kaoqin.exe
+          name: mingxu-windows
+          path: app/dist/mingxu.exe
 
       - name: Generate checksum
         shell: bash
-        run: sha256sum app/dist/nanjing_kaoqin.exe > app/dist/SHA256.txt
+        run: sha256sum app/dist/mingxu.exe > app/dist/SHA256.txt
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            app/dist/nanjing_kaoqin.exe
+            app/dist/mingxu.exe
             app/dist/SHA256.txt
           generate_release_notes: true

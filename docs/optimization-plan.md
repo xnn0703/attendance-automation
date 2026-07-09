@@ -23,7 +23,7 @@
 4. **CI / 发版**
    - PR 到 `main/master`：macOS 跑 `test_engine.py` + GUI smoke。
    - 推 `v*` tag：先跑测试，再在 Windows runner 上 PyInstaller 打包。
-   - Release 附 `nanjing_kaoqin.exe` 与 `SHA256.txt`。
+   - Release 附 `mingxu.exe` 与 `SHA256.txt`。
 
 ## 验收命令
 

@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 造合成测试数据 | `python app/_make_sample.py <DIR>`（无真实数据时生成覆盖各 status 的三表，供冒烟/演示） |
 | **金标准回归测试** | `python app/test_golden.py` → 末行 `ZERO-REGRESSION` / `REGRESSION FOUND`（需真实数据 + PS 金标准） |
 | 无头冒烟（端到端走查 GUI） | `KQ_DIR=<DIR> python app/_smoke_gui.py` 或 `python app/gui.py --smoke <DIR>`（offscreen，末行 `SMOKE OK`） |
-| 打包 exe | `app/build_exe.bat`(Win) 或 GitHub Actions（推 `v*` tag）→ `nanjing_kaoqin.exe` |
+| 打包 exe | `app/build_exe.bat`(Win) 或 GitHub Actions（推 `v*` tag）→ `mingxu.exe` |
 | Skill（PowerShell 实现） | `& .agents/skills/nanjing-kaoqin/scripts/kq_run.ps1 -Stage prep\|worklist\|build -Dir <DIR>` |
 
 - **无 pytest**：`test_golden.py` / `_smoke_gui.py` 都是直接 `python` 跑的独立脚本，没有测试框架；"跑单个测试"=跑对应脚本。`KQ_NO_MOTION=1` 可关 GUI 动效（reduced-motion）。
@@ -294,5 +294,5 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. ✅ 封装为 **Skill** `nanjing-kaoqin`（换月通用、配置驱动；2026-05 端到端零回归；见「实现」）。
 3. ⏳ 用**另一月份数据实测** skill（数据待提供，验证押后）。
 4. ✅ **GUI 上位机已实现**（`app/`，Python+PySide6，引擎方案 A，2026-05 零回归）：Phase 1 MVP + Phase 2（彩色预览 /
-   双击改判即时重算 / 决策存取 / 输入校验）+ Phase 3（PyInstaller 打包 `dist\nanjing_kaoqin.exe`）均完成。见上「GUI 上位机」。
+   双击改判即时重算 / 决策存取 / 输入校验）+ Phase 3（PyInstaller 打包 `dist\mingxu.exe`）均完成。见上「GUI 上位机」。
 5. 项目已用**本地 git** 管理（无云端），提交在 `master`。
